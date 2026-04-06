@@ -140,10 +140,8 @@ slurm**/
 *.slurm
 .vscode/
 .idea/
-logging/
 checkpoints/
 original_samples/
-videos/
 generate_npy/results.npy
 generate_npy/results.txt
 generate_npy/results_len.txt
