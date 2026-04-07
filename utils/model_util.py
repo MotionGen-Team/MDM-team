@@ -64,6 +64,7 @@ def get_model_args(args, data):
     multi_target_cond = args.__dict__.get('multi_target_cond', False)
     multi_encoder_type = args.__dict__.get('multi_encoder_type', 'multi')
     target_enc_layers = args.__dict__.get('target_enc_layers', 1)
+    use_temporal_tcn = args.__dict__.get('use_temporal_tcn', False)
 
     return {'modeltype': '', 'njoints': njoints, 'nfeats': nfeats, 'num_actions': num_actions,
             'translation': True, 'pose_rep': 'rot6d', 'glob': True, 'glob_rot': True,
@@ -74,7 +75,7 @@ def get_model_args(args, data):
             'text_encoder_type': args.text_encoder_type,
             'pos_embed_max_len': args.pos_embed_max_len, 'mask_frames': args.mask_frames,
             'pred_len': args.pred_len, 'context_len': args.context_len, 'emb_policy': emb_policy,
-            'use_temporal_tcn': False,
+            'use_temporal_tcn': use_temporal_tcn,
             'all_goal_joint_names': all_goal_joint_names, 'multi_target_cond': multi_target_cond, 'multi_encoder_type': multi_encoder_type, 'target_enc_layers': target_enc_layers,
             }
 

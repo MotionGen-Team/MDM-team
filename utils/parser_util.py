@@ -120,6 +120,8 @@ def add_model_options(parser):
                        help="Pose embedding max length.")
     group.add_argument("--use_ema", action='store_true',
                     help="If True, will use EMA model averaging.")
+    group.add_argument("--use_temporal_tcn", action='store_true',
+                       help="If true, insert the lightweight temporal TCN before the Transformer temporal encoder.")
     
 
     group.add_argument("--multi_target_cond", action='store_true', help="If true, enable multi-target conditioning (aka Sigal's model).")
