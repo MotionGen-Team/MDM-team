@@ -1,15 +1,16 @@
 import torch
 from model.mdm import MDM
+from model.plan_one import PlanOneMDM
 from diffusion import gaussian_diffusion as gd
 from diffusion.respace import SpacedDiffusion, space_timesteps
 from utils.parser_util import get_cond_mode
-from data_loaders.humanml_utils import HML_EE_JOINT_NAMES
+from data_loaders.humanml_custom_utils import HML_EE_JOINT_NAMES
 
 def load_model_wo_clip(model, state_dict):
     # assert (state_dict['sequence_pos_encoder.pe'][:model.sequence_pos_encoder.pe.shape[0]] == model.sequence_pos_encoder.pe).all()  # TEST
     # assert (state_dict['embed_timestep.sequence_pos_encoder.pe'][:model.embed_timestep.sequence_pos_encoder.pe.shape[0]] == model.embed_timestep.sequence_pos_encoder.pe).all()  # TEST
-    del state_dict['sequence_pos_encoder.pe']  # no need to load it (fixed), and causes size mismatch for older models
-    del state_dict['embed_timestep.sequence_pos_encoder.pe']  # no need to load it (fixed), and causes size mismatch for older models
+    state_dict.pop('sequence_pos_encoder.pe', None)  # fixed positional buffer, old checkpoints may differ in length
+    state_dict.pop('embed_timestep.sequence_pos_encoder.pe', None)  # same as above
     missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
     assert len(unexpected_keys) == 0
     allowed_missing_prefixes = (
@@ -17,13 +18,18 @@ def load_model_wo_clip(model, state_dict):
         'sequence_pos_encoder',
         'embed_timestep.sequence_pos_encoder',
         'temporal_tcn.',
+        'text_proj.',
     )
     unexpected_missing_keys = [k for k in missing_keys if not k.startswith(allowed_missing_prefixes)]
     assert len(unexpected_missing_keys) == 0, f'Unexpected missing keys: {unexpected_missing_keys}'
 
 
 def create_model_and_diffusion(args, data):
-    model = MDM(**get_model_args(args, data))
+    model_args = get_model_args(args, data)
+    if args.arch == 'plan_one':
+        model = PlanOneMDM(**model_args)
+    else:
+        model = MDM(**model_args)
     diffusion = create_gaussian_diffusion(args)
     return model, diffusion
 
@@ -65,6 +71,36 @@ def get_model_args(args, data):
     multi_encoder_type = args.__dict__.get('multi_encoder_type', 'multi')
     target_enc_layers = args.__dict__.get('target_enc_layers', 1)
     use_temporal_tcn = args.__dict__.get('use_temporal_tcn', False)
+
+    if args.arch == 'plan_one':
+        if data_rep != 'hml_vec':
+            raise ValueError(f'plan_one currently supports only hml_vec input, got {data_rep}')
+
+        struct_joints_num = 22 if args.dataset == 'humanml' else 21
+        return {
+            'njoints': njoints,
+            'nfeats': nfeats,
+            'data_rep': data_rep,
+            'struct_joints_num': struct_joints_num,
+            'd_model': args.latent_dim,
+            'd_struct': max(args.latent_dim // 2, 64),
+            'dropout': 0.1,
+            'global_layers': args.layers,
+            'global_ff_mult': 4,
+            'global_query_heads': 8,
+            'global_kv_heads': 2,
+            'pos_embed_max_len': args.pos_embed_max_len,
+            'cond_mode': cond_mode,
+            'cond_mask_prob': args.cond_mask_prob,
+            'dataset': args.dataset,
+            'text_encoder_type': args.text_encoder_type,
+            'clip_version': clip_version,
+            'all_goal_joint_names': all_goal_joint_names,
+            'translation': True,
+            'pose_rep': 'rot6d',
+            'glob': True,
+            'glob_rot': True,
+        }
 
     return {'modeltype': '', 'njoints': njoints, 'nfeats': nfeats, 'num_actions': num_actions,
             'translation': True, 'pose_rep': 'rot6d', 'glob': True, 'glob_rot': True,

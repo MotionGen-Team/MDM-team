@@ -89,8 +89,7 @@ files = [input_dir]
 for i, npy_path in enumerate(files):
     file = os.path.basename(npy_path)
 
-    motion = np.load(npy_path)  # (22,3,T)
-    motion = np.transpose(motion, (2, 0, 1))  # (T,22,3)
+    motion = np.load(npy_path)  # (T,22,3)
 
     print(f"[{i + 1}/{len(files)}] Processing {file}, shape: {motion.shape}")
 
@@ -146,4 +145,4 @@ for i, npy_path in enumerate(files):
     clip = VideoClip(make_frame, duration=n_frames/fps)
     clip.write_videofile(video_path, fps=fps)
 
-    print(f"✅ Saved video: {video_path}")
+    print(f"Saved video: {video_path}")

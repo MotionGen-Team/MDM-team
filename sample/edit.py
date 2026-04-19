@@ -13,8 +13,8 @@ from utils.model_util import create_model_and_diffusion, load_saved_model
 from utils import dist_util
 from utils.sampler_util import ClassifierFreeSampleModel
 from data_loaders.get_data import get_dataset_loader
-from data_loaders.humanml.scripts.motion_process import recover_from_ric
-from data_loaders import humanml_utils
+from data_loaders.humanml.scripts.custom_motion_process import recover_from_ric
+from data_loaders import humanml_custom_utils
 import data_loaders.humanml.utils.paramUtil as paramUtil
 from data_loaders.humanml.utils.plot_script import plot_3d_motion
 import shutil
@@ -84,7 +84,7 @@ def main():
             model_kwargs['y']['inpainting_mask'][i, :, :,
             start_idx: end_idx] = False  # do inpainting in those frames
     elif args.edit_mode == 'upper_body':
-        model_kwargs['y']['inpainting_mask'] = torch.tensor(humanml_utils.HML_LOWER_BODY_MASK, dtype=torch.bool,
+        model_kwargs['y']['inpainting_mask'] = torch.tensor(humanml_custom_utils.HML_LOWER_BODY_MASK, dtype=torch.bool,
                                                             device=input_motions.device)  # True is lower body data
         model_kwargs['y']['inpainting_mask'] = model_kwargs['y']['inpainting_mask'].unsqueeze(0).unsqueeze(
             -1).unsqueeze(-1).repeat(input_motions.shape[0], 1, input_motions.shape[2], input_motions.shape[3])

@@ -17,7 +17,7 @@ from diffusion.nn import mean_flat, sum_flat
 from diffusion.losses import normal_kl, discretized_gaussian_log_likelihood
 from data_loaders.humanml.scripts import motion_process
 from utils.loss_util import masked_l2, masked_goal_l2
-from data_loaders.humanml.scripts.motion_process import get_target_location
+from data_loaders.humanml.scripts.custom_motion_process import get_target_location
 
 def get_named_beta_schedule(schedule_name, num_diffusion_timesteps, scale_betas=1.):
     """
