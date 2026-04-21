@@ -85,17 +85,6 @@ class PlanOneMDM(nn.Module):
         self.sequence_pos_encoder = PositionalEncoding(d_model, dropout, max_len=pos_embed_max_len)
         self.embed_timestep = TimestepEmbedder(d_model, self.sequence_pos_encoder)
 
-        # 文本条件支持两种接法：
-        # 1. 直接传入 text_embed
-        # 2. 先给模型挂一个外部文本编码器，再传 raw text
-        #
-        # 如果 text_cond_dim 已知，就直接构造普通 Linear；
-        # 如果还不想写死维度，则退回 LazyLinear，在第一次见到 text_embed 时初始化。
-        if text_cond_dim is None:
-            self.text_proj = nn.LazyLinear(d_model)
-        else:
-            self.text_proj = nn.Linear(text_cond_dim, d_model)
-        self.cond_norm = nn.LayerNorm(d_model)
         self.text_cond_dim = text_cond_dim
         self._text_encoder: Callable[[Any], torch.Tensor] | None = None
         self.text_encoder_name = 'external'
@@ -120,6 +109,18 @@ class PlanOneMDM(nn.Module):
                     self.text_cond_dim = 768
             else:
                 raise ValueError(f'Unsupported text_encoder_type: {self.text_encoder_type}')
+
+        # 文本条件支持两种接法：
+        # 1. 直接传入 text_embed
+        # 2. 先给模型挂一个外部文本编码器，再传 raw text
+        #
+        # 对 clip/bert 这类已知编码维度的情况，直接构造普通 Linear，
+        # 避免训练启动阶段在参数统计时碰到未初始化的 Lazy 参数。
+        if self.text_cond_dim is None:
+            self.text_proj = nn.LazyLinear(d_model)
+        else:
+            self.text_proj = nn.Linear(self.text_cond_dim, d_model)
+        self.cond_norm = nn.LayerNorm(d_model)
 
         self.shared_embedding = SharedEmbeddingBlock(
             data_rep=data_rep,
