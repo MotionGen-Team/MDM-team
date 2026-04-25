@@ -167,6 +167,8 @@ conda env create -f environment.yml
 conda activate mdm_clean
 ```
 
+当前仓库里的 `environment.yml` 已对齐本机 `C:\anoconda\envs\mdm_clean`，核心版本为 `Python 3.8.20`、`PyTorch 2.4.1`、`CUDA 12.1`。
+
 ## 训练、生成、可视化的统一约定
 
 ### 1. 训练输出

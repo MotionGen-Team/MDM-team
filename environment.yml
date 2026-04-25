@@ -1,55 +1,50 @@
 name: mdm_clean
 channels:
   - pytorch
+  - nvidia
   - conda-forge
   - defaults
 dependencies:
-  - python=3.7
-  - cudatoolkit=11.0
-  - pytorch=1.7.1
-  - torchvision=0.8.2
-  - torchaudio=0.7.2
-  - numpy=1.21.5
-  - scipy=1.7.3
-  - scikit-learn=1.0.2
-  - matplotlib=3.1.3
-  - pandas=1.3.1
-  - seaborn
-  - h5py=3.7.0
-  - pillow=9.2.0
-  - tqdm=4.64.1
-  - trimesh=3.15.3
-  - joblib=1.1.0
-  - spacy=3.3.1
-  - gdown=4.5.1
-  - pyyaml
-  - blobfile
-  - pip
+  - python=3.8.20
+  - pytorch=2.4.1
+  - pytorch-cuda=12.1
+  - torchvision=0.20.0
+  - torchaudio=2.4.1
+  - numpy=1.23.5
+  - scipy=1.10.1
+  - scikit-learn=1.3.2
+  - matplotlib=3.7.5
+  - pandas=2.0.3
+  - seaborn=0.13.2
+  - pillow=10.4.0
+  - pyyaml=6.0.2
+  - pip=24.3.1
   - pip:
-      - git+https://github.com/openai/CLIP.git
-      - moviepy==1.0.3
-      - imageio==2.22.2
-      - imageio-ffmpeg
-      - smplx==0.1.28
+      - blobfile==3.1.0
+      - blis==0.7.11
       - chumpy==0.70
-      - wandb==0.15.12
-      - clearml
-      - configargparse
-      - pyrender>=0.1.23
-      - torchgeometry>=0.1.2
-      - blis==0.7.8
-      - click==8.1.3
-      - confection==0.0.2
-      - ftfy==6.1.1
-      - importlib-metadata==5.0.0
-      - lxml==4.9.1
-      - murmurhash==1.0.8
-      - preshed==3.0.7
-      - pycryptodomex==3.15.0
-      - regex==2022.9.13
-      - srsly==2.4.4
-      - thinc==8.0.17
-      - typing-extensions==4.1.1
-      - urllib3==1.26.12
-      - wasabi==0.10.1
-      - wcwidth==0.2.5
+      - click==8.1.8
+      - clip==1.0
+      - confection==0.1.5
+      - gdown==5.2.1
+      - h5py==3.11.0
+      - imageio==2.35.1
+      - imageio-ffmpeg==0.5.1
+      - joblib==1.4.2
+      - lxml==6.0.2
+      - moviepy==1.0.3
+      - murmurhash==1.0.9
+      - preshed==3.0.8
+      - pycryptodomex==3.23.0
+      - regex==2024.11.6
+      - smplx==0.1.28
+      - spacy==3.5.3
+      - srsly==2.4.8
+      - thinc==8.1.12
+      - tqdm==4.67.3
+      - trimesh==4.11.5
+      - typing-extensions==4.12.2
+      - urllib3==2.2.3
+      - wandb==0.24.2
+      - wasabi==1.1.3
+      - wcwidth==0.2.14
