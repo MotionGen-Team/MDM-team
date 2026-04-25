@@ -160,7 +160,7 @@ motion-diffusion-model-main/
 conda activate mdm_clean
 ```
 
-如果没有环境，就根据仓库里的 `environment.yml` 创建：
+如果没有环境，就根据仓库里的 `environment.yml` 创建（该文件中的环境名为 `mdm_clean`）：
 
 ```powershell
 conda env create -f environment.yml
