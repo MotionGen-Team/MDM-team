@@ -7,6 +7,7 @@ from typing import Dict
 import torch
 import torch.nn as nn
 
+# 可选三种变体：temporal_gqa（baseline）、temporal_gqa_kv1、temporal_gqa_window。
 from .temporal_gqa import TemporalGQA
 
 

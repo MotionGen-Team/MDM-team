@@ -1,4 +1,4 @@
-"""全局分支里的时间主线 GQA 模块。"""
+"""全局分支里的时间主线 GQA 模块（baseline）。"""
 
 from __future__ import annotations
 
