@@ -180,7 +180,7 @@ checkpoints/代码改动版本名
 例如：
 
 ```powershell
-python -m train.train_mdm --save_dir checkpoints\feature_conv_v1 --dataset humanml
+python -m train.train_mdm --save_dir checkpoints\feature_conv_v1 --dataset humanml --batch_size 128
 ```
 
 ### 2. 生成结果
@@ -405,6 +405,7 @@ body_models/
 python -m train.train_mdm ^
   --save_dir checkpoints\plan_one_smoke ^
   --dataset humanml ^
+  --batch_size 128 ^
   --arch plan_one ^
   --text_encoder_type clip
 ```
@@ -415,6 +416,7 @@ python -m train.train_mdm ^
 python -m train.train_mdm ^
   --save_dir checkpoints\plan_one_v1 ^
   --dataset humanml ^
+  --batch_size 128 ^
   --arch plan_one ^
   --text_encoder_type clip
 ```
