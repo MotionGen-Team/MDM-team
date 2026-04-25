@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # MDM: Human Motion Diffusion Model
 
 
@@ -541,3 +542,7 @@ that our code is based on:
 This code is distributed under an [MIT LICENSE](LICENSE).
 
 Note that our code depends on other libraries, including CLIP, SMPL, SMPL-X, PyTorch3D, and uses datasets that each have their own respective licenses that must also be followed.
+=======
+# Motion-Diffusion-Modle
+基于扩散模型的角色动作生成
+>>>>>>> 5bff542ffcf39afaf8b94a4125f1ce14db5b6e60
