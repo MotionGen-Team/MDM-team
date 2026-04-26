@@ -68,7 +68,7 @@ class TrainLoop:
         self.last_loss = None
         self.loss_csv_interval = 1000
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-        self.loss_csv_path = os.path.join(repo_root, 'output', 'loss_steps_373d2.csv')
+        self.loss_csv_path = os.path.join(repo_root, 'output', 'loss_steps_base.csv')
 
         self.sync_cuda = torch.cuda.is_available()
 
