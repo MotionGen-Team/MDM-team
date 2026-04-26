@@ -65,6 +65,10 @@ class TrainLoop:
         self.global_batch = self.batch_size # * dist.get_world_size()
         self.num_steps = args.num_steps
         self.num_epochs = self.num_steps // len(self.data) + 1
+        self.last_loss = None
+        self.loss_csv_interval = 1000
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        self.loss_csv_path = os.path.join(repo_root, 'output', 'loss_steps_373d2.csv')
 
         self.sync_cuda = torch.cuda.is_available()
 
@@ -217,6 +221,7 @@ class TrainLoop:
                 cond['y'] = {key: val.to(self.device) if torch.is_tensor(val) else val for key, val in cond['y'].items()}
 
                 self.run_step(motion, cond)
+                self.maybe_append_loss_csv(self.total_step() + 1)
                 if self.total_step() % self.log_interval == 0:
                     for k,v in logger.get_current().dumpkvs().items():
                         if k == 'loss':
@@ -296,6 +301,17 @@ class TrainLoop:
         self._anneal_lr()
         self.log_step()
 
+    def maybe_append_loss_csv(self, step):
+        if self.last_loss is None or step <= 0 or step % self.loss_csv_interval != 0:
+            return
+        os.makedirs(os.path.dirname(self.loss_csv_path), exist_ok=True)
+        file_exists = os.path.exists(self.loss_csv_path)
+        needs_header = (not file_exists) or os.path.getsize(self.loss_csv_path) == 0
+        with open(self.loss_csv_path, 'a', encoding='utf-8') as fw:
+            if needs_header:
+                fw.write('step,loss\n')
+            fw.write(f'{step},{self.last_loss:.10f}\n')
+
     def update_average_model(self):
         # update the average model using exponential moving average
         if self.args.use_ema:
@@ -341,6 +357,7 @@ class TrainLoop:
                 )
 
             loss = (losses["loss"] * weights).mean()
+            self.last_loss = loss.item()
             log_loss_dict(
                 self.diffusion, t, {k: v * weights for k, v in losses.items()}
             )

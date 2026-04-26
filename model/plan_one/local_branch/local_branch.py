@@ -10,7 +10,7 @@ import torch.nn as nn
 from .body_groups import BODY_GROUPS, split_body_groups
 from .group_attention import GroupSelfAttention
 from .group_pooling import MeanGroupPooling
-from .multi_scale_temporal import MultiScaleTemporalConv
+from .multi_scale_temporal import get_multi_scale_tcn
 
 
 class LocalBranch(nn.Module):
@@ -25,12 +25,12 @@ class LocalBranch(nn.Module):
     5. concat 3 个 group token，再映射到统一的 `L_t`
     """
 
-    def __init__(self, d_struct: int, d_model: int, dropout: float = 0.1):
+    def __init__(self, d_struct: int, d_model: int, dropout: float = 0.1, multi_scale_variant: str = 'baseline'):
         super().__init__()
         self.group_names = ['left_leg', 'right_leg', 'torso_upper']
         self.group_pooling = MeanGroupPooling()
         self.group_temporal = nn.ModuleDict({
-            group_name: MultiScaleTemporalConv(d_struct=d_struct, dropout=dropout)
+            group_name: get_multi_scale_tcn(multi_scale_variant, latent_dim=d_struct, dropout=dropout)
             for group_name in self.group_names
         })
         self.group_attention = GroupSelfAttention(d_struct=d_struct, num_heads=1, dropout=dropout)

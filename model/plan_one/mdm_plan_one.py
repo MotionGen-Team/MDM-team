@@ -56,6 +56,7 @@ class PlanOneMDM(nn.Module):
         dataset: str = 'humanml',
         text_encoder_type: str = 'clip',
         clip_version: str = 'ViT-B/32',
+        multi_scale_variant: str = 'baseline',
         all_goal_joint_names: list[str] | None = None,
         translation: bool = True,
         pose_rep: str = 'rot6d',
@@ -75,6 +76,7 @@ class PlanOneMDM(nn.Module):
         self.dataset = dataset
         self.text_encoder_type = text_encoder_type
         self.clip_version = clip_version
+        self.multi_scale_variant = multi_scale_variant
         self.translation = translation
         self.pose_rep = pose_rep
         self.glob = glob
@@ -133,6 +135,7 @@ class PlanOneMDM(nn.Module):
             d_struct=d_struct,
             d_model=d_model,
             dropout=dropout,
+            multi_scale_variant=multi_scale_variant,
         )
         self.global_branch = GlobalBranch(
             d_struct=d_struct,

@@ -71,6 +71,7 @@ def get_model_args(args, data):
     multi_encoder_type = args.__dict__.get('multi_encoder_type', 'multi')
     target_enc_layers = args.__dict__.get('target_enc_layers', 1)
     use_temporal_tcn = args.__dict__.get('use_temporal_tcn', False)
+    multi_scale_variant = args.__dict__.get('multi_scale_variant', 'baseline')
 
     if args.arch == 'plan_one':
         if data_rep != 'hml_vec':
@@ -95,6 +96,7 @@ def get_model_args(args, data):
             'dataset': args.dataset,
             'text_encoder_type': args.text_encoder_type,
             'clip_version': clip_version,
+            'multi_scale_variant': multi_scale_variant,
             'all_goal_joint_names': all_goal_joint_names,
             'translation': True,
             'pose_rep': 'rot6d',

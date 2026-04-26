@@ -123,6 +123,9 @@ def add_model_options(parser):
                     help="If True, will use EMA model averaging.")
     group.add_argument("--use_temporal_tcn", action='store_true',
                        help="If true, insert the lightweight temporal TCN before the Transformer temporal encoder.")
+    group.add_argument("--multi_scale_variant", default='baseline',
+                       choices=['baseline', '3-7-3-dil2', '3-5-5-dil2'], type=str,
+                       help="Variant of the plan_one local multi-scale temporal conv block.")
     
 
     group.add_argument("--multi_target_cond", action='store_true', help="If true, enable multi-target conditioning (aka Sigal's model).")
