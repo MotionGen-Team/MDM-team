@@ -160,12 +160,14 @@ motion-diffusion-model-main/
 conda activate mdm_clean
 ```
 
-如果没有环境，就根据仓库里的 `environment.yml` 创建：
+如果没有环境，就根据仓库里的 `environment.yml` 创建（该文件中的环境名为 `mdm_clean`）：
 
 ```powershell
 conda env create -f environment.yml
 conda activate mdm_clean
 ```
+
+当前仓库里的 `environment.yml` 已对齐本机 `C:\anoconda\envs\mdm_clean`，核心版本为 `Python 3.8.20`、`PyTorch 2.4.1`、`CUDA 12.1`。
 
 ## 训练、生成、可视化的统一约定
 
@@ -180,7 +182,7 @@ checkpoints/代码改动版本名
 例如：
 
 ```powershell
-python -m train.train_mdm --save_dir checkpoints\feature_conv_v1 --dataset humanml
+python -m train.train_mdm --save_dir checkpoints\feature_conv_v1 --dataset humanml --batch_size 128
 ```
 
 ### 2. 生成结果
@@ -405,6 +407,7 @@ body_models/
 python -m train.train_mdm ^
   --save_dir checkpoints\plan_one_smoke ^
   --dataset humanml ^
+  --batch_size 128 ^
   --arch plan_one ^
   --text_encoder_type clip
 ```
@@ -415,6 +418,7 @@ python -m train.train_mdm ^
 python -m train.train_mdm ^
   --save_dir checkpoints\plan_one_v1 ^
   --dataset humanml ^
+  --batch_size 128 ^
   --arch plan_one ^
   --text_encoder_type clip
 ```
