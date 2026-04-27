@@ -137,10 +137,10 @@ class StructureAdapter(nn.Module):
         else:
             raise ValueError(f'Unsupported joints_num for foot mapping: {self.joints_num}')
 
-        foot_full[..., left_foot_joints[0], 0] = foot[..., 0]
-        foot_full[..., left_foot_joints[1], 0] = foot[..., 1]
-        foot_full[..., right_foot_joints[0], 0] = foot[..., 2]
-        foot_full[..., right_foot_joints[1], 0] = foot[..., 3]
+        foot_full[..., right_foot_joints[0], 0] = foot[..., 0]
+        foot_full[..., right_foot_joints[1], 0] = foot[..., 1]
+        foot_full[..., left_foot_joints[0], 0] = foot[..., 2]
+        foot_full[..., left_foot_joints[1], 0] = foot[..., 3]
 
         x_struct = torch.cat([root_ctx, ric_full, rot_full, local_vel, foot_full], dim=-1)
         return x_struct

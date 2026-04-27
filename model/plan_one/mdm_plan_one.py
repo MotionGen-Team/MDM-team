@@ -121,6 +121,10 @@ class PlanOneMDM(nn.Module):
         else:
             self.text_proj = nn.Linear(self.text_cond_dim, d_model)
         self.cond_norm = nn.LayerNorm(d_model)
+        self.struct_pos_proj = nn.Linear(d_model, d_struct)
+        self.cond_to_struct = nn.Linear(d_model, d_struct)
+        self.h_global_norm = nn.LayerNorm(d_model)
+        self.h_struct_norm = nn.LayerNorm(d_struct)
 
         self.shared_embedding = SharedEmbeddingBlock(
             data_rep=data_rep,
@@ -254,6 +258,7 @@ class PlanOneMDM(nn.Module):
         # 第一层：结构适配 + 共享嵌入。
         # 输出结构化表示 h_struct 和时序共享表示 h_global。
         shared_outputs = self.shared_embedding(x_t, c=c)
+        shared_outputs = self.inject_condition_and_position(shared_outputs, c=c, nframes=nframes)
 
         # 第二层局部分支：围绕 body groups 做局部时序建模，输出 L_t。
         local_outputs = self.local_branch(shared_outputs['h_struct'])
@@ -295,6 +300,37 @@ class PlanOneMDM(nn.Module):
             'y_raw': y_raw,
             'y_pred': y_pred,
         }
+#确认位置编码和c注入
+    def inject_condition_and_position(
+        self,
+        shared_outputs: Dict[str, Any],
+        c: torch.Tensor,
+        nframes: int,
+    ) -> Dict[str, Any]:
+        h_struct = shared_outputs['h_struct']
+        h_global = shared_outputs['h_global']
+
+        if h_struct.shape[0] != nframes or h_global.shape[0] != nframes:
+            raise ValueError('Shared outputs frame length mismatch during condition injection.')
+
+        frame_pos = self.sequence_pos_encoder.pe[:nframes].to(device=h_global.device, dtype=h_global.dtype)
+        h_global = self.h_global_norm(h_global + frame_pos.expand(-1, h_global.shape[1], -1))
+
+        frame_pos_struct = self.struct_pos_proj(frame_pos).to(dtype=h_struct.dtype)
+        h_struct = h_struct + frame_pos_struct.unsqueeze(2).expand(-1, h_struct.shape[1], h_struct.shape[2], -1)
+
+        cond_global = c.to(dtype=h_global.dtype).expand(nframes, -1, -1)
+        h_global = self.h_global_norm(h_global + cond_global)
+
+        cond_struct = self.cond_to_struct(c.to(dtype=h_struct.dtype)).expand(nframes, -1, -1)
+        h_struct = h_struct + cond_struct.unsqueeze(2).expand(-1, -1, h_struct.shape[2], -1)
+        h_struct = self.h_struct_norm(h_struct)
+
+        shared_outputs = dict(shared_outputs)
+        shared_outputs['h_struct'] = h_struct
+        shared_outputs['h_global'] = h_global
+        shared_outputs['frame_pos'] = frame_pos
+        return shared_outputs
 
     def build_condition(self, timesteps: torch.Tensor, y: Dict[str, Any] | None = None) -> torch.Tensor:
         """
