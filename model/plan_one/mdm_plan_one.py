@@ -21,6 +21,13 @@ from .tcn_refine.residual_tcn import CoordinationResidualTCN
 
 
 class PlanOneMDM(nn.Module):
+    # 当前方案一主流程：
+    # 1. 先由 diffusion timestep 和可选文本条件构造统一条件 `c`。
+    # 2. shared embedding 生成结构侧 token `h_struct` 和时间侧 token `h_global`。
+    # 3. 给两条主干都注入帧位置编码和条件信息。
+    # 4. local branch 负责局部结构动态建模。
+    # 5. global branch 负责 summary fusion 和全局时间建模。
+    # 6. refine 阶段先给 base prediction，再叠加带 gate 的 residual 修正。
     """
     方案一总装模型。
 
@@ -230,6 +237,9 @@ class PlanOneMDM(nn.Module):
         y: Dict[str, Any] | None = None,
         return_dict: bool = False,
     ) -> torch.Tensor | Dict[str, Any]:
+        # 前向路径：
+        # x_t -> shared embedding -> 条件/位置注入 -> local/global branches
+        # -> fusion -> base head -> 带 gate 的 residual TCN -> 恢复 motion tensor
         """
         输入:
             x_t: [B, J, F, T]
@@ -301,6 +311,8 @@ class PlanOneMDM(nn.Module):
             'y_pred': y_pred,
         }
 #确认位置编码和c注入
+    # 同时给 `h_global` 和 `h_struct` 注入帧级位置编码与统一条件，
+    # 确保方案一主干真正对 timestep 和 text condition 敏感。
     def inject_condition_and_position(
         self,
         shared_outputs: Dict[str, Any],
@@ -333,6 +345,10 @@ class PlanOneMDM(nn.Module):
         return shared_outputs
 
     def build_condition(self, timesteps: torch.Tensor, y: Dict[str, Any] | None = None) -> torch.Tensor:
+        # 当前条件构造优先级：
+        # 1. 如果外部直接传入 `y['c']`，就优先直接使用。
+        # 2. 否则先从 timestep embedding 开始构造。
+        # 3. 如果有 `text_embed` 或 raw `text`，再叠加文本条件。
         """
         构造统一条件嵌入 `c [1, B, D]`。
 

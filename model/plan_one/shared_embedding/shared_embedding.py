@@ -45,6 +45,7 @@ class SharedEmbeddingBlock(nn.Module):
         self.input_proj = nn.Linear(self.structure_adapter.output_feat_dim, d_struct)
         self.pre_norm = nn.LayerNorm(d_struct)
         self.post_norm = nn.LayerNorm(d_struct)
+        self.global_pool_score = nn.Linear(d_struct, 1)
         self.global_proj = nn.Linear(d_struct, d_model)
 
     def forward(self, x_t: torch.Tensor, c: torch.Tensor | None = None) -> Dict[str, torch.Tensor]:
@@ -72,13 +73,17 @@ class SharedEmbeddingBlock(nn.Module):
         h_struct = self.post_norm(h_struct)
 
         # 当前先用 mean pooling 做全局汇聚，优先保证稳定和易接入。
-        pooled = h_struct.mean(dim=2)
+        # 鍏ㄥ眬琛ㄧず鏀规垚鍙涔犲姞鏉冩眹鑱氾紝閬垮厤鏃╂湡 mean pooling 鎶婂叧閿粨鏋勫樊寮傛姽骞炽€?
+        global_weight_logits = self.global_pool_score(h_struct)
+        global_weights = torch.softmax(global_weight_logits, dim=2)
+        pooled = (global_weights * h_struct).sum(dim=2)
         h_global = self.global_proj(pooled)
 
         return {
             'x_struct': x_struct,
             'h_struct': h_struct,
             'h_global': h_global,
+            'global_weights': global_weights,
             'c': c,
         }
 

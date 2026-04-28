@@ -37,6 +37,7 @@ class SummaryFusion(nn.Module):
             dropout=dropout,
             batch_first=True,
         )
+        self.gate_logit = nn.Parameter(torch.tensor(-3.0))
         # 注入后做一次 layer norm，避免结构增强把时间主线数值尺度拉偏。
         self.out_norm = nn.LayerNorm(d_model)
 
@@ -74,12 +75,13 @@ class SummaryFusion(nn.Module):
         # “当前时刻的全局时间表示，去看这一时刻左腿/右腿/躯干分别在说什么。”
         delta, _ = self.cross_attn(q, kv, kv, need_weights=False)
         delta = delta.view(timesteps, batch_size, channels)
+        gate = torch.sigmoid(self.gate_logit).to(dtype=delta.dtype, device=delta.device)
 
         # 残差 + 归一化：
         # 保证 summary 注入更像轻量增强，而不是直接重写时间主线。
         # 这对后面接 GQA 主干很重要，因为我们希望 GQA 看到的是“增强后的时间主线”，
         # 而不是完全被 summary 主导的表示。
-        h_global_enh = self.out_norm(h_global + delta)
+        h_global_enh = self.out_norm(h_global + gate * delta)
 
         # 后续可尝试的替代结构：
         # 1. summary gating:
@@ -92,5 +94,6 @@ class SummaryFusion(nn.Module):
         #    后面如果手臂单独拆组，可以把 3 个 summary token 扩到 4/5 个继续复用。
         return {
             'delta': delta,
+            'gate': gate,
             'h_global_enh': h_global_enh,
         }

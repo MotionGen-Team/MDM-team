@@ -26,6 +26,7 @@ from data_loaders.get_data import get_dataset_loader
 from utils.model_util import load_model_wo_clip
 from data_loaders.humanml.scripts.custom_motion_process import get_target_location, sample_goal, get_allowed_joint_options
 from utils.sampler_util import ClassifierFreeSampleModel
+from model.plan_one.local_branch.body_groups import split_body_groups
 
 
 # For ImageNet experiments, this was a good default value.
@@ -68,7 +69,9 @@ class TrainLoop:
         self.last_loss = None
         self.loss_csv_interval = 1000
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-        self.loss_csv_path = os.path.join(repo_root, 'output', 'loss_steps_base.csv')
+        self.loss_csv_path = os.path.join(repo_root, 'output', 'loss_steps_plan_one.csv')
+        self.gate_csv_path = os.path.join(repo_root, 'output', 'plan_one_gate.csv')
+        self.hstruct_csv_path = os.path.join(repo_root, 'output', 'plan_one_hstruct.csv')
 
         self.sync_cuda = torch.cuda.is_available()
 
@@ -222,6 +225,8 @@ class TrainLoop:
 
                 self.run_step(motion, cond)
                 self.maybe_append_loss_csv(self.total_step() + 1)
+                self.maybe_append_gate_csv(self.total_step() + 1)
+                self.maybe_append_hstruct_csv(self.total_step() + 1, motion, cond)
                 if self.total_step() % self.log_interval == 0:
                     for k,v in logger.get_current().dumpkvs().items():
                         if k == 'loss':
@@ -311,6 +316,90 @@ class TrainLoop:
             if needs_header:
                 fw.write('step,loss\n')
             fw.write(f'{step},{self.last_loss:.10f}\n')
+
+    def maybe_append_gate_csv(self, step):
+        if step <= 0 or step % self.loss_csv_interval != 0 or getattr(self.args, 'arch', None) != 'plan_one':
+            return
+        gate_values = self.get_plan_one_gate_values()
+        if gate_values is None:
+            return
+        summary_gate, residual_gate = gate_values
+        os.makedirs(os.path.dirname(self.gate_csv_path), exist_ok=True)
+        file_exists = os.path.exists(self.gate_csv_path)
+        needs_header = (not file_exists) or os.path.getsize(self.gate_csv_path) == 0
+        with open(self.gate_csv_path, 'a', encoding='utf-8') as fw:
+            if needs_header:
+                fw.write('step,summary_gate,residual_gate\n')
+            fw.write(f'{step},{summary_gate:.10f},{residual_gate:.10f}\n')
+
+    def get_plan_one_gate_values(self):
+        model = self.model.module if hasattr(self.model, 'module') else self.model
+        summary_module = getattr(getattr(model, 'global_branch', None), 'summary_fusion', None)
+        residual_module = getattr(model, 'residual_tcn', None)
+        if summary_module is None or residual_module is None:
+            return None
+        summary_logit = getattr(summary_module, 'gate_logit', None)
+        residual_logit = getattr(residual_module, 'gate_logit', None)
+        if summary_logit is None or residual_logit is None:
+            return None
+        summary_gate = torch.sigmoid(summary_logit.detach()).item()
+        residual_gate = torch.sigmoid(residual_logit.detach()).item()
+        return summary_gate, residual_gate
+
+    def maybe_append_hstruct_csv(self, step, motion, cond):
+        if step <= 0 or step % self.loss_csv_interval != 0 or getattr(self.args, 'arch', None) != 'plan_one':
+            return
+        stats = self.get_plan_one_hstruct_stats(motion, cond)
+        if stats is None:
+            return
+        os.makedirs(os.path.dirname(self.hstruct_csv_path), exist_ok=True)
+        file_exists = os.path.exists(self.hstruct_csv_path)
+        needs_header = (not file_exists) or os.path.getsize(self.hstruct_csv_path) == 0
+        with open(self.hstruct_csv_path, 'a', encoding='utf-8') as fw:
+            if needs_header:
+                fw.write(
+                    'step,left_leg_norm,right_leg_norm,torso_norm,'
+                    'left_leg_var,right_leg_var,torso_var\n'
+                )
+            fw.write(
+                f'{step},'
+                f'{stats["left_leg_norm"]:.10f},{stats["right_leg_norm"]:.10f},{stats["torso_norm"]:.10f},'
+                f'{stats["left_leg_var"]:.10f},{stats["right_leg_var"]:.10f},{stats["torso_var"]:.10f}\n'
+            )
+
+    def get_plan_one_hstruct_stats(self, motion, cond):
+        model = self.model.module if hasattr(self.model, 'module') else self.model
+        if not hasattr(model, 'forward'):
+            return None
+
+        diag_timesteps = torch.zeros(motion.shape[0], device=motion.device, dtype=torch.long)
+        with torch.no_grad():
+            prev_mode = model.training
+            model.eval()
+            try:
+                outputs = model(motion, diag_timesteps, y=cond['y'], return_dict=True)
+            finally:
+                model.train(prev_mode)
+
+        h_struct = outputs.get('shared', {}).get('h_struct')
+        if h_struct is None:
+            return None
+
+        grouped = split_body_groups(h_struct.detach())
+        stats = {}
+        for group_name in ['left_leg', 'right_leg', 'torso_upper']:
+            group_tensor = grouped[group_name]
+            stats[f'{group_name}_norm'] = group_tensor.norm(dim=-1).mean().item()
+            stats[f'{group_name}_var'] = group_tensor.var(unbiased=False).item()
+
+        return {
+            'left_leg_norm': stats['left_leg_norm'],
+            'right_leg_norm': stats['right_leg_norm'],
+            'torso_norm': stats['torso_upper_norm'],
+            'left_leg_var': stats['left_leg_var'],
+            'right_leg_var': stats['right_leg_var'],
+            'torso_var': stats['torso_upper_var'],
+        }
 
     def update_average_model(self):
         # update the average model using exponential moving average

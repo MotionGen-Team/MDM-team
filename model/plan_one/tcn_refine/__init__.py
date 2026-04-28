@@ -1,4 +1,4 @@
-"""Fusion and residual refinement components for plan one."""
+"""方案一的融合与残差修正模块。"""
 
 from .fusion import FusionBlock
 from .heads import BasePredictionHead, BaseToLatentProjector, RefineHeads

@@ -124,6 +124,7 @@ class CoordinationResidualTCN(nn.Module):
         self.block2 = ResidualTCNBlock(channels=channels, dilation=2, dropout=dropout)
         # 最后把 2D latent 修正结果映射回 motion residual 空间 C。
         self.out_proj = nn.Linear(channels, out_dim)
+        self.gate_logit = nn.Parameter(torch.tensor(-3.0))
 
     def forward(self, r_in: torch.Tensor) -> Dict[str, torch.Tensor]:
         # 第一个残差 TCN block：优先修正短时间范围内的局部不协调。
@@ -140,9 +141,11 @@ class CoordinationResidualTCN(nn.Module):
         # 4. 条件化 refine:
         #    后面如果想让 refine 对文本或时间步更敏感，可以把 `c` 以 FiLM/gating 方式注入。
         # 输出投影：把 refine latent 映射回 motion residual。
-        delta_raw = self.out_proj(x2)
+        gate = torch.sigmoid(self.gate_logit).to(dtype=x2.dtype, device=x2.device)
+        delta_raw = gate * self.out_proj(x2)
         return {
             'x1': x1,
             'x2': x2,
+            'gate': gate,
             'delta_raw': delta_raw,
         }
