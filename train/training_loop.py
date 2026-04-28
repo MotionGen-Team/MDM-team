@@ -358,13 +358,22 @@ class TrainLoop:
         with open(self.hstruct_csv_path, 'a', encoding='utf-8') as fw:
             if needs_header:
                 fw.write(
-                    'step,left_leg_norm,right_leg_norm,torso_norm,'
-                    'left_leg_var,right_leg_var,torso_var\n'
+                    'step,'
+                    'x_struct_left_leg_norm,x_struct_right_leg_norm,x_struct_torso_norm,'
+                    'x_struct_left_leg_var,x_struct_right_leg_var,x_struct_torso_var,'
+                    'h_struct_pre_left_leg_norm,h_struct_pre_right_leg_norm,h_struct_pre_torso_norm,'
+                    'h_struct_pre_left_leg_var,h_struct_pre_right_leg_var,h_struct_pre_torso_var,'
+                    'h_struct_post_left_leg_norm,h_struct_post_right_leg_norm,h_struct_post_torso_norm,'
+                    'h_struct_post_left_leg_var,h_struct_post_right_leg_var,h_struct_post_torso_var\n'
                 )
             fw.write(
                 f'{step},'
-                f'{stats["left_leg_norm"]:.10f},{stats["right_leg_norm"]:.10f},{stats["torso_norm"]:.10f},'
-                f'{stats["left_leg_var"]:.10f},{stats["right_leg_var"]:.10f},{stats["torso_var"]:.10f}\n'
+                f'{stats["x_struct_left_leg_norm"]:.10f},{stats["x_struct_right_leg_norm"]:.10f},{stats["x_struct_torso_norm"]:.10f},'
+                f'{stats["x_struct_left_leg_var"]:.10f},{stats["x_struct_right_leg_var"]:.10f},{stats["x_struct_torso_var"]:.10f},'
+                f'{stats["h_struct_pre_left_leg_norm"]:.10f},{stats["h_struct_pre_right_leg_norm"]:.10f},{stats["h_struct_pre_torso_norm"]:.10f},'
+                f'{stats["h_struct_pre_left_leg_var"]:.10f},{stats["h_struct_pre_right_leg_var"]:.10f},{stats["h_struct_pre_torso_var"]:.10f},'
+                f'{stats["h_struct_post_left_leg_norm"]:.10f},{stats["h_struct_post_right_leg_norm"]:.10f},{stats["h_struct_post_torso_norm"]:.10f},'
+                f'{stats["h_struct_post_left_leg_var"]:.10f},{stats["h_struct_post_right_leg_var"]:.10f},{stats["h_struct_post_torso_var"]:.10f}\n'
             )
 
     def get_plan_one_hstruct_stats(self, motion, cond):
@@ -381,25 +390,31 @@ class TrainLoop:
             finally:
                 model.train(prev_mode)
 
-        h_struct = outputs.get('shared', {}).get('h_struct')
-        if h_struct is None:
+        shared_outputs = outputs.get('shared', {})
+        x_struct = shared_outputs.get('x_struct')
+        h_struct_pre = shared_outputs.get('h_struct_pre_inject')
+        h_struct_post = shared_outputs.get('h_struct')
+        if x_struct is None or h_struct_pre is None or h_struct_post is None:
             return None
 
-        grouped = split_body_groups(h_struct.detach())
+        if x_struct.shape[2] != 22 or h_struct_pre.shape[2] != 22 or h_struct_post.shape[2] != 22:
+            return None
+
+        stats = {}
+        stats.update(self._collect_group_stats(x_struct.detach(), 'x_struct'))
+        stats.update(self._collect_group_stats(h_struct_pre.detach(), 'h_struct_pre'))
+        stats.update(self._collect_group_stats(h_struct_post.detach(), 'h_struct_post'))
+        return stats
+
+    def _collect_group_stats(self, tensor, prefix):
+        grouped = split_body_groups(tensor)
         stats = {}
         for group_name in ['left_leg', 'right_leg', 'torso_upper']:
             group_tensor = grouped[group_name]
-            stats[f'{group_name}_norm'] = group_tensor.norm(dim=-1).mean().item()
-            stats[f'{group_name}_var'] = group_tensor.var(unbiased=False).item()
-
-        return {
-            'left_leg_norm': stats['left_leg_norm'],
-            'right_leg_norm': stats['right_leg_norm'],
-            'torso_norm': stats['torso_upper_norm'],
-            'left_leg_var': stats['left_leg_var'],
-            'right_leg_var': stats['right_leg_var'],
-            'torso_var': stats['torso_upper_var'],
-        }
+            group_key = 'torso' if group_name == 'torso_upper' else group_name
+            stats[f'{prefix}_{group_key}_norm'] = group_tensor.norm(dim=-1).mean().item()
+            stats[f'{prefix}_{group_key}_var'] = group_tensor.var(unbiased=False).item()
+        return stats
 
     def update_average_model(self):
         # update the average model using exponential moving average

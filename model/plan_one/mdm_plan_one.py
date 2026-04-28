@@ -15,6 +15,7 @@ from model.rotation2xyz import Rotation2xyz
 from .global_branch.global_branch import GlobalBranch
 from .local_branch.local_branch import LocalBranch
 from .shared_embedding.shared_embedding import SharedEmbeddingBlock
+from .shared_embedding.structure_adapter import TORSO_JOINT_INDICES
 from .tcn_refine.fusion import FusionBlock
 from .tcn_refine.heads import RefineHeads
 from .tcn_refine.residual_tcn import CoordinationResidualTCN
@@ -57,6 +58,9 @@ class PlanOneMDM(nn.Module):
         global_query_heads: int = 8,
         global_kv_heads: int = 2,
         pos_embed_max_len: int = 5000,
+        root_broadcast_mode: str = 'all_joints',
+        struct_pos_inject_mode: str = 'all_joints',
+        struct_cond_inject_mode: str = 'all_joints',
         text_cond_dim: int | None = None,
         cond_mode: str = 'no_cond',
         cond_mask_prob: float = 0.0,
@@ -77,6 +81,9 @@ class PlanOneMDM(nn.Module):
         self.d_model = d_model
         self.d_struct = d_struct
         self.out_dim = njoints * nfeats
+        self.root_broadcast_mode = root_broadcast_mode
+        self.struct_pos_inject_mode = struct_pos_inject_mode
+        self.struct_cond_inject_mode = struct_cond_inject_mode
         self.cond_mode = cond_mode
         self.cond_mask_prob = cond_mask_prob
         self.dataset = dataset
@@ -139,6 +146,7 @@ class PlanOneMDM(nn.Module):
             d_model=d_model,
             d_struct=d_struct,
             dropout=dropout,
+            root_broadcast_mode=root_broadcast_mode,
         )
         self.local_branch = LocalBranch(
             d_struct=d_struct,
@@ -329,20 +337,49 @@ class PlanOneMDM(nn.Module):
         h_global = self.h_global_norm(h_global + frame_pos.expand(-1, h_global.shape[1], -1))
 
         frame_pos_struct = self.struct_pos_proj(frame_pos).to(dtype=h_struct.dtype)
-        h_struct = h_struct + frame_pos_struct.unsqueeze(2).expand(-1, h_struct.shape[1], h_struct.shape[2], -1)
+        h_struct_pre_inject = h_struct
+        h_struct = self._inject_struct_signal(
+            h_struct,
+            frame_pos_struct.unsqueeze(2).expand(-1, h_struct.shape[1], 1, -1),
+            mode=self.struct_pos_inject_mode,
+        )
 
         cond_global = c.to(dtype=h_global.dtype).expand(nframes, -1, -1)
         h_global = self.h_global_norm(h_global + cond_global)
 
         cond_struct = self.cond_to_struct(c.to(dtype=h_struct.dtype)).expand(nframes, -1, -1)
-        h_struct = h_struct + cond_struct.unsqueeze(2).expand(-1, -1, h_struct.shape[2], -1)
+        h_struct = self._inject_struct_signal(
+            h_struct,
+            cond_struct.unsqueeze(2),
+            mode=self.struct_cond_inject_mode,
+        )
         h_struct = self.h_struct_norm(h_struct)
 
         shared_outputs = dict(shared_outputs)
+        shared_outputs['h_struct_pre_inject'] = h_struct_pre_inject
         shared_outputs['h_struct'] = h_struct
         shared_outputs['h_global'] = h_global
         shared_outputs['frame_pos'] = frame_pos
         return shared_outputs
+
+    def _inject_struct_signal(
+        self,
+        h_struct: torch.Tensor,
+        signal: torch.Tensor,
+        mode: str,
+    ) -> torch.Tensor:
+        if mode == 'none':
+            return h_struct
+        if mode == 'all_joints':
+            return h_struct + signal.expand(-1, -1, h_struct.shape[2], -1)
+        if mode == 'torso_only':
+            torso_indices = TORSO_JOINT_INDICES.get(h_struct.shape[2])
+            if torso_indices is None:
+                raise ValueError(f'Unsupported structured token count for torso-only injection: {h_struct.shape[2]}')
+            signal_full = torch.zeros_like(h_struct)
+            signal_full[..., torso_indices, :] = signal.expand(-1, -1, len(torso_indices), -1)
+            return h_struct + signal_full
+        raise ValueError(f'Unsupported struct injection mode: {mode}')
 
     def build_condition(self, timesteps: torch.Tensor, y: Dict[str, Any] | None = None) -> torch.Tensor:
         # 当前条件构造优先级：

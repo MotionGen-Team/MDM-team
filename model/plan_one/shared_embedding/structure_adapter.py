@@ -7,6 +7,11 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 
+TORSO_JOINT_INDICES = {
+    22: (0, 3, 6, 9, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21),
+    21: (0, 3, 6, 9, 12, 13, 14, 15, 16, 17, 18, 19, 20),
+}
+
 
 @dataclass(frozen=True)
 class HMLVecLayout:
@@ -49,11 +54,17 @@ class StructureAdapter(nn.Module):
     - `root_data` 会广播到每个关节 token 上，这样后续模块在看局部结构时也能拿到全局轨迹信息。
     """
 
-    def __init__(self, data_rep: str = 'hml_vec', joints_num: int = 22):
+    def __init__(
+        self,
+        data_rep: str = 'hml_vec',
+        joints_num: int = 22,
+        root_broadcast_mode: str = 'all_joints',
+    ):
         super().__init__()
         self.data_rep = data_rep
         self.joints_num = joints_num
         self.layout = HMLVecLayout(joints_num=joints_num)
+        self.root_broadcast_mode = root_broadcast_mode
 
         # 暴露给下游模块，用来确定第一层投影的输入维度。
         if self.data_rep == 'hml_vec':
@@ -115,7 +126,16 @@ class StructureAdapter(nn.Module):
 
         # 把 root 上下文复制到每个关节 token，这样后续分支在看局部结构时
         # 不需要重新回到扁平向量里读取全局轨迹信息。
-        root_ctx = root.unsqueeze(2).expand(-1, -1, self.joints_num, -1)
+        root_ctx = x_seq.new_zeros(nframes, batch_size, self.joints_num, self.layout.root_dim)
+        if self.root_broadcast_mode == 'all_joints':
+            root_ctx = root.unsqueeze(2).expand(-1, -1, self.joints_num, -1)
+        elif self.root_broadcast_mode == 'torso_only':
+            torso_indices = TORSO_JOINT_INDICES.get(self.joints_num)
+            if torso_indices is None:
+                raise ValueError(f'Unsupported joints_num for torso-only root injection: {self.joints_num}')
+            root_ctx[..., torso_indices, :] = root.unsqueeze(2).expand(-1, -1, len(torso_indices), -1)
+        elif self.root_broadcast_mode != 'none':
+            raise ValueError(f'Unsupported root_broadcast_mode: {self.root_broadcast_mode}')
 
         # root 本身在 hml_vec 里没有 ric/rot 对应项，这里补零保持张量对齐。
         ric_full = x_seq.new_zeros(nframes, batch_size, self.joints_num, 3)

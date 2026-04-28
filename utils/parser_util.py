@@ -123,6 +123,15 @@ def add_model_options(parser):
                     help="If True, will use EMA model averaging.")
     group.add_argument("--use_temporal_tcn", action='store_true',
                        help="If true, insert the lightweight temporal TCN before the Transformer temporal encoder.")
+    group.add_argument("--plan_one_root_mode", default='all_joints',
+                       choices=['all_joints', 'torso_only', 'none'], type=str,
+                       help="For plan_one only, controls how root/global features are injected into structured tokens.")
+    group.add_argument("--plan_one_struct_pos_mode", default='all_joints',
+                       choices=['all_joints', 'torso_only', 'none'], type=str,
+                       help="For plan_one only, controls how frame positional features are injected into h_struct.")
+    group.add_argument("--plan_one_struct_cond_mode", default='all_joints',
+                       choices=['all_joints', 'torso_only', 'none'], type=str,
+                       help="For plan_one only, controls how timestep/text condition is injected into h_struct.")
     
 
     group.add_argument("--multi_target_cond", action='store_true', help="If true, enable multi-target conditioning (aka Sigal's model).")

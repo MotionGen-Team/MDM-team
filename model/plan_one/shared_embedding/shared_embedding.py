@@ -29,6 +29,7 @@ class SharedEmbeddingBlock(nn.Module):
         d_model: int = 512,
         d_struct: int = 256,
         dropout: float = 0.1,
+        root_broadcast_mode: str = 'all_joints',
     ):
         super().__init__()
         self.data_rep = data_rep
@@ -36,7 +37,11 @@ class SharedEmbeddingBlock(nn.Module):
         self.d_model = d_model
         self.d_struct = d_struct
 
-        self.structure_adapter = StructureAdapter(data_rep=data_rep, joints_num=joints_num)
+        self.structure_adapter = StructureAdapter(
+            data_rep=data_rep,
+            joints_num=joints_num,
+            root_broadcast_mode=root_broadcast_mode,
+        )
         self.temporal_mixer = _TemporalMixer(
             feature_dim=self.structure_adapter.output_feat_dim,
             dropout=dropout,

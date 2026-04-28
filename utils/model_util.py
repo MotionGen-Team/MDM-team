@@ -71,6 +71,9 @@ def get_model_args(args, data):
     multi_encoder_type = args.__dict__.get('multi_encoder_type', 'multi')
     target_enc_layers = args.__dict__.get('target_enc_layers', 1)
     use_temporal_tcn = args.__dict__.get('use_temporal_tcn', False)
+    plan_one_root_mode = args.__dict__.get('plan_one_root_mode', 'all_joints')
+    plan_one_struct_pos_mode = args.__dict__.get('plan_one_struct_pos_mode', 'all_joints')
+    plan_one_struct_cond_mode = args.__dict__.get('plan_one_struct_cond_mode', 'all_joints')
 
     if args.arch == 'plan_one':
         if data_rep != 'hml_vec':
@@ -90,6 +93,9 @@ def get_model_args(args, data):
             'global_query_heads': 8,
             'global_kv_heads': 2,
             'pos_embed_max_len': args.pos_embed_max_len,
+            'root_broadcast_mode': plan_one_root_mode,
+            'struct_pos_inject_mode': plan_one_struct_pos_mode,
+            'struct_cond_inject_mode': plan_one_struct_cond_mode,
             'cond_mode': cond_mode,
             'cond_mask_prob': args.cond_mask_prob,
             'dataset': args.dataset,
