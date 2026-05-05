@@ -1,0 +1,30 @@
+import torch
+from summary_fusion import SummaryFusion
+
+def test_all_modes():
+    T, B, D = 10, 2, 512        # 假定的时间步、批量、维度
+    h = torch.randn(T, B, D)
+    s = torch.randn(T, B, 3, D)
+
+    for mode in ['crossattn', 'gating', 'film']:
+        print(f"\nTesting mode: {mode}")
+        fusion = SummaryFusion(d_model=D, mode=mode)
+        out = fusion(h, s)
+
+        # 检查返回的键
+        assert 'delta' in out and 'gate' in out and 'h_global_enh' in out, "Missing keys!"
+        # 检查输出形状
+        assert out['delta'].shape == (T, B, D), f"delta shape mismatch: {out['delta'].shape}"
+        assert out['h_global_enh'].shape == (T, B, D), f"h_global_enh shape mismatch: {out['h_global_enh'].shape}"
+        # 检查数值合法性
+        assert not torch.isnan(out['h_global_enh']).any(), "NaN detected!"
+        assert not torch.isinf(out['h_global_enh']).any(), "Inf detected!"
+
+        print(f"  delta range: [{out['delta'].min().item():.3f}, {out['delta'].max().item():.3f}]")
+        print(f"  gate value:  {out['gate'].item():.4f}")
+        print(f"  h_enh range: [{out['h_global_enh'].min().item():.3f}, {out['h_global_enh'].max().item():.3f}]")
+
+    print("\n✅ All modes passed basic tests.")
+
+if __name__ == "__main__":
+    test_all_modes()
