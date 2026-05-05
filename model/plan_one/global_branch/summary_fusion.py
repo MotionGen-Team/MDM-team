@@ -10,90 +10,136 @@ import torch.nn as nn
 
 class SummaryFusion(nn.Module):
     """
-    用 cross-attention 把 `S_t` 注入到 `H_global` 中。
+    用不同策略把 `S_t` 注入到 `H_global` 中。
 
-    当前做法：
-    - Q = H_global
-    - K = S_t
-    - V = S_t
-    - 每个时间步独立做 attention
-    - 最后做 residual + layer norm
-
-    设计原因：
-    - `H_global` 是时间主线，所以 query 必须来自它。
-    - `S_t` 是结构摘要，所以 key/value 用它最自然。
-    - 这里先做结构增强，再进入后面的 GQA transformer，符合方案图里
-      “temporal tokens + group summary -> 结构增强的时间建模”的顺序。
+    mode 可选：
+    - 'crossattn' : cross-attention (baseline)
+    - 'gating'    : summary gating
+    - 'film'      : mean(S_t) 后线性调制 (FiLM)
     """
 
-    def __init__(self, d_model: int, num_heads: int = 1, dropout: float = 0.1):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int = 1,
+        dropout: float = 0.1,
+        mode: str = "crossattn",
+    ):
         super().__init__()
-        # 这里先用标准 MultiheadAttention 实现 summary fusion。
-        # 注意它的职责不是替代 global 主干，而是先把结构摘要注入时间主线。
-        # 第一版固定单头，优先保证行为清晰、便于排查。
-        self.cross_attn = nn.MultiheadAttention(
-            embed_dim=d_model,
-            num_heads=num_heads,
-            dropout=dropout,
-            batch_first=True,
-        )
-        self.gate_logit = nn.Parameter(torch.tensor(-3.0))
-        # 注入后做一次 layer norm，避免结构增强把时间主线数值尺度拉偏。
+        self.mode = mode
+
+        if mode == "crossattn":
+            self.cross_attn = nn.MultiheadAttention(
+                embed_dim=d_model,
+                num_heads=num_heads,
+                dropout=dropout,
+                batch_first=True,
+            )
+            self.gate_logit = nn.Parameter(torch.tensor(-3.0))
+
+        elif mode == "gating":
+            # 把 s_t 的平均向量投影到门控值
+            self.gate_proj = nn.Linear(d_model, d_model)
+
+        elif mode == "film":
+            # FiLM 的两个调制分支
+            self.scale_proj = nn.Linear(d_model, d_model)
+            self.shift_proj = nn.Linear(d_model, d_model)
+
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
+
+        # 增强后的 layer norm
         self.out_norm = nn.LayerNorm(d_model)
 
-    def forward(self, h_global: torch.Tensor, s_t: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(
+        self, h_global: torch.Tensor, s_t: torch.Tensor
+    ) -> Dict[str, torch.Tensor]:
         """
         输入:
             h_global: [T, B, D]
             s_t:      [T, B, 3, D]
 
         输出:
-            - `delta`:         [T, B, D]
-            - `h_global_enh`:  [T, B, D]
+            - 'delta':         [T, B, D]
+            - 'gate':          标量或平均门控值（用于日志）
+            - 'h_global_enh':  [T, B, D]
         """
+        # ========= 通用输入校验 =========
         if h_global.ndim != 3:
-            raise ValueError(f'Expected 3D h_global, got shape {tuple(h_global.shape)}')
+            raise ValueError(
+                f"Expected 3D h_global, got shape {tuple(h_global.shape)}"
+            )
         if s_t.ndim != 4:
-            raise ValueError(f'Expected 4D s_t, got shape {tuple(s_t.shape)}')
+            raise ValueError(f"Expected 4D s_t, got shape {tuple(s_t.shape)}")
         if h_global.shape[0] != s_t.shape[0] or h_global.shape[1] != s_t.shape[1]:
-            raise ValueError('h_global and s_t must match on T and B dimensions')
+            raise ValueError("h_global and s_t must match on T and B dimensions")
         if s_t.shape[2] != 3:
-            raise ValueError(f'Summary fusion expects 3 summary tokens, got {s_t.shape[2]}')
+            raise ValueError(
+                f"Summary fusion expects 3 summary tokens, got {s_t.shape[2]}"
+            )
 
+        # ========= 三种融合方式 =========
+        if self.mode == "crossattn":
+            return self._forward_crossattn(h_global, s_t)
+        elif self.mode == "gating":
+            return self._forward_gating(h_global, s_t)
+        elif self.mode == "film":
+            return self._forward_film(h_global, s_t)
+
+    def _forward_crossattn(
+        self, h_global: torch.Tensor, s_t: torch.Tensor
+    ) -> Dict[str, torch.Tensor]:
+        """Baseline：cross-attention 注入"""
         timesteps, batch_size, channels = h_global.shape
 
-        # [T, B, D] -> [T*B, 1, D]
-        # 每个时间步、每个样本都看成一个独立的 cross-attention 小问题。
-        # 这样这里不会再次沿时间维混合信息，而是专注做“同一时刻的结构注入”。
         q = h_global.reshape(timesteps * batch_size, 1, channels)
-        # [T, B, 3, D] -> [T*B, 3, D]
-        # 每个时间步都对应 3 个 group summary token：左腿、右腿、躯干。
         kv = s_t.reshape(timesteps * batch_size, 3, channels)
 
-        # 每个时间步上，时间主线 token 去查询同一时刻的 3 个 group summary。
-        # 这一步的含义是：
-        # “当前时刻的全局时间表示，去看这一时刻左腿/右腿/躯干分别在说什么。”
         delta, _ = self.cross_attn(q, kv, kv, need_weights=False)
         delta = delta.view(timesteps, batch_size, channels)
         gate = torch.sigmoid(self.gate_logit).to(dtype=delta.dtype, device=delta.device)
 
-        # 残差 + 归一化：
-        # 保证 summary 注入更像轻量增强，而不是直接重写时间主线。
-        # 这对后面接 GQA 主干很重要，因为我们希望 GQA 看到的是“增强后的时间主线”，
-        # 而不是完全被 summary 主导的表示。
         h_global_enh = self.out_norm(h_global + gate * delta)
 
-        # 后续可尝试的替代结构：
-        # 1. summary gating:
-        #    如果后面发现 cross-attention 过重或收益不大，可以退回更简单的 gating。
-        # 2. 两阶段 summary fusion:
-        #    先 group 内摘要，再加一个跨组摘要，适合后面想增强结构信息层次时尝试。
-        # 3. 带 FFN 的 summary fusion block:
-        #    在 cross-attention 后加一个小 FFN，形成更完整的 transformer-style 小块。
-        # 4. 更细粒度 summary token:
-        #    后面如果手臂单独拆组，可以把 3 个 summary token 扩到 4/5 个继续复用。
         return {
-            'delta': delta,
-            'gate': gate,
-            'h_global_enh': h_global_enh,
+            "delta": delta,
+            "gate": gate,
+            "h_global_enh": h_global_enh,
+        }
+
+    def _forward_gating(
+        self, h_global: torch.Tensor, s_t: torch.Tensor
+    ) -> Dict[str, torch.Tensor]:
+        """Summary gating：用 s_t 的平均值生成门控权重"""
+        # s_t: [T, B, 3, D] -> mean -> [T, B, D]
+        s_mean = s_t.mean(dim=2)
+        gate = torch.sigmoid(self.gate_proj(s_mean))  # [T, B, D]
+
+        # 用 (1 + gate) 做残差式增强，避免主干信号被过度衰减
+        h_global_enh = self.out_norm(h_global * (1.0 + gate))
+        delta = h_global_enh - h_global
+
+        return {
+            "delta": delta,
+            "gate": gate.mean(),  # 返回标量，便于观察
+            "h_global_enh": h_global_enh,
+        }
+
+    def _forward_film(
+        self, h_global: torch.Tensor, s_t: torch.Tensor
+    ) -> Dict[str, torch.Tensor]:
+        """FiLM：mean(S_t) 后线性调制（缩放 + 偏移）"""
+        s_mean = s_t.mean(dim=2)  # [T, B, D]
+
+        scale = self.scale_proj(s_mean)  # [T, B, D]
+        shift = self.shift_proj(s_mean)  # [T, B, D]
+
+        h_global_enh = self.out_norm(h_global * scale + shift)
+        delta = h_global_enh - h_global
+
+        return {
+            "delta": delta,
+            "gate": scale.mean(),  # 用 scale 的平均值作为观察指标
+            "h_global_enh": h_global_enh,
         }
