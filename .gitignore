@@ -153,3 +153,7 @@ dataset/t2m_train.npy
 dataset/t2m_test.npy
 dataset/humanml*/
 dataset/*.npy
+dataset/*.zip
+output/
+videos/
+generate_npy/tmp_custom_vis_input*.npy

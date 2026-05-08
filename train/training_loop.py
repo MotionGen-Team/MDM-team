@@ -71,7 +71,7 @@ class TrainLoop:
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         self.loss_csv_path = os.path.join(repo_root, 'output', 'loss_steps_plan_one.csv')
         self.gate_csv_path = os.path.join(repo_root, 'output', 'plan_one_gate.csv')
-        self.hstruct_csv_path = os.path.join(repo_root, 'output', 'plan_one_hstruct.csv')
+        self.hstruct_csv_path = os.path.join(repo_root, 'output', 'plan_one_hstruct_norm_stages.csv')
 
         self.sync_cuda = torch.cuda.is_available()
 
@@ -352,29 +352,15 @@ class TrainLoop:
         stats = self.get_plan_one_hstruct_stats(motion, cond)
         if stats is None:
             return
+        stat_columns = self._plan_one_hstruct_stat_columns()
         os.makedirs(os.path.dirname(self.hstruct_csv_path), exist_ok=True)
         file_exists = os.path.exists(self.hstruct_csv_path)
         needs_header = (not file_exists) or os.path.getsize(self.hstruct_csv_path) == 0
         with open(self.hstruct_csv_path, 'a', encoding='utf-8') as fw:
             if needs_header:
-                fw.write(
-                    'step,'
-                    'x_struct_left_leg_norm,x_struct_right_leg_norm,x_struct_torso_norm,'
-                    'x_struct_left_leg_var,x_struct_right_leg_var,x_struct_torso_var,'
-                    'h_struct_pre_left_leg_norm,h_struct_pre_right_leg_norm,h_struct_pre_torso_norm,'
-                    'h_struct_pre_left_leg_var,h_struct_pre_right_leg_var,h_struct_pre_torso_var,'
-                    'h_struct_post_left_leg_norm,h_struct_post_right_leg_norm,h_struct_post_torso_norm,'
-                    'h_struct_post_left_leg_var,h_struct_post_right_leg_var,h_struct_post_torso_var\n'
-                )
-            fw.write(
-                f'{step},'
-                f'{stats["x_struct_left_leg_norm"]:.10f},{stats["x_struct_right_leg_norm"]:.10f},{stats["x_struct_torso_norm"]:.10f},'
-                f'{stats["x_struct_left_leg_var"]:.10f},{stats["x_struct_right_leg_var"]:.10f},{stats["x_struct_torso_var"]:.10f},'
-                f'{stats["h_struct_pre_left_leg_norm"]:.10f},{stats["h_struct_pre_right_leg_norm"]:.10f},{stats["h_struct_pre_torso_norm"]:.10f},'
-                f'{stats["h_struct_pre_left_leg_var"]:.10f},{stats["h_struct_pre_right_leg_var"]:.10f},{stats["h_struct_pre_torso_var"]:.10f},'
-                f'{stats["h_struct_post_left_leg_norm"]:.10f},{stats["h_struct_post_right_leg_norm"]:.10f},{stats["h_struct_post_torso_norm"]:.10f},'
-                f'{stats["h_struct_post_left_leg_var"]:.10f},{stats["h_struct_post_right_leg_var"]:.10f},{stats["h_struct_post_torso_var"]:.10f}\n'
-            )
+                fw.write('step,' + ','.join(stat_columns) + '\n')
+            values = [f'{stats[column]:.10f}' for column in stat_columns]
+            fw.write(f'{step},' + ','.join(values) + '\n')
 
     def get_plan_one_hstruct_stats(self, motion, cond):
         model = self.model.module if hasattr(self.model, 'module') else self.model
@@ -390,21 +376,35 @@ class TrainLoop:
             finally:
                 model.train(prev_mode)
 
-        shared_outputs = outputs.get('shared', {})
-        x_struct = shared_outputs.get('x_struct')
-        h_struct_pre = shared_outputs.get('h_struct_pre_inject')
-        h_struct_post = shared_outputs.get('h_struct')
-        if x_struct is None or h_struct_pre is None or h_struct_post is None:
-            return None
-
-        if x_struct.shape[2] != 22 or h_struct_pre.shape[2] != 22 or h_struct_post.shape[2] != 22:
-            return None
-
         stats = {}
-        stats.update(self._collect_group_stats(x_struct.detach(), 'x_struct'))
-        stats.update(self._collect_group_stats(h_struct_pre.detach(), 'h_struct_pre'))
-        stats.update(self._collect_group_stats(h_struct_post.detach(), 'h_struct_post'))
+        shared_outputs = outputs.get('shared', {})
+        for output_key, stat_prefix in self._plan_one_hstruct_stat_tensors():
+            tensor = shared_outputs.get(output_key)
+            if tensor is None or tensor.shape[2] != 22:
+                return None
+            stats.update(self._collect_group_stats(tensor.detach(), stat_prefix))
         return stats
+
+    def _plan_one_hstruct_stat_tensors(self):
+        return [
+            ('x_struct_raw', 'x_struct_raw'),
+            ('x_struct_mixed', 'x_struct_mixed'),
+            ('x_struct', 'x_struct_norm'),
+            ('h_struct_proj', 'h_struct_proj'),
+            ('h_struct_pre_norm', 'h_struct_pre_norm'),
+            ('h_struct_pre_inject', 'h_struct_pre_inject'),
+            ('h_struct', 'h_struct_post_inject'),
+        ]
+
+    def _plan_one_hstruct_stat_columns(self):
+        columns = []
+        groups = ['left_leg', 'right_leg', 'torso']
+        metrics = ['norm', 'var']
+        for _, stat_prefix in self._plan_one_hstruct_stat_tensors():
+            for metric in metrics:
+                for group in groups:
+                    columns.append(f'{stat_prefix}_{group}_{metric}')
+        return columns
 
     def _collect_group_stats(self, tensor, prefix):
         grouped = split_body_groups(tensor)

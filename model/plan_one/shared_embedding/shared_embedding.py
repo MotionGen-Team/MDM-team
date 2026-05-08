@@ -60,22 +60,26 @@ class SharedEmbeddingBlock(nn.Module):
             c: 可选条件嵌入 `[1, B, D]`，当前只透传，不在本层内注入
 
         输出：
-            - `x_struct`: 投影前的结构化特征
+            - `x_struct_raw`: `StructureAdapter` 输出，未经过时序混合和归一化
+            - `x_struct_mixed`: 时序混合后、`temporal_norm` 前的结构化特征
+            - `x_struct`: `temporal_norm` 后、投影前的结构化特征
+            - `h_struct_proj`: 线性投影后、结构侧归一化前的 latent
+            - `h_struct_pre_norm`: `pre_norm` 后、`post_norm` 前的 latent
             - `h_struct`: 结构侧 latent 表示 `[T, B, G_in, D_s]`
             - `h_global`: 全局时序表示 `[T, B, D]`
             - `c`: 原样透传的条件嵌入
         """
-        x_struct = self.structure_adapter(x_t)
+        x_struct_raw = self.structure_adapter(x_t)
 
         # 轻量时序混合放在投影前，这样时间上下文是在“结构化原始特征”层面
         # 先被注入的，而不是等投影后再补。
-        x_struct = self.temporal_mixer(x_struct)
-        x_struct = self.temporal_norm(x_struct)
+        x_struct_mixed = self.temporal_mixer(x_struct_raw)
+        x_struct = self.temporal_norm(x_struct_mixed)
 
         # 共享投影把结构特征映射到后续分支统一使用的结构 latent 宽度。
-        h_struct = self.input_proj(x_struct)
-        h_struct = self.pre_norm(h_struct)
-        h_struct = self.post_norm(h_struct)
+        h_struct_proj = self.input_proj(x_struct)
+        h_struct_pre_norm = self.pre_norm(h_struct_proj)
+        h_struct = self.post_norm(h_struct_pre_norm)
 
         # 当前先用 mean pooling 做全局汇聚，优先保证稳定和易接入。
         # 鍏ㄥ眬琛ㄧず鏀规垚鍙涔犲姞鏉冩眹鑱氾紝閬垮厤鏃╂湡 mean pooling 鎶婂叧閿粨鏋勫樊寮傛姽骞炽€?
@@ -85,7 +89,11 @@ class SharedEmbeddingBlock(nn.Module):
         h_global = self.global_proj(pooled)
 
         return {
+            'x_struct_raw': x_struct_raw,
+            'x_struct_mixed': x_struct_mixed,
             'x_struct': x_struct,
+            'h_struct_proj': h_struct_proj,
+            'h_struct_pre_norm': h_struct_pre_norm,
             'h_struct': h_struct,
             'h_global': h_global,
             'global_weights': global_weights,
