@@ -170,6 +170,11 @@ class PlanOneMDM(nn.Module):
     def parameters_wo_clip(self):
         return [p for name, p in self.named_parameters() if not name.startswith('clip_model.')]
 
+    def set_train_step(self, step: int) -> None:
+        for module in (self.global_branch.summary_fusion, self.residual_tcn):
+            if hasattr(module, 'set_train_step'):
+                module.set_train_step(step)
+
     def load_and_freeze_clip(self, clip_version: str):
         clip_model, _ = clip.load(clip_version, device='cpu', jit=False)
         clip.model.convert_weights(clip_model)

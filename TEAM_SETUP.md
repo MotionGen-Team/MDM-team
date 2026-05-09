@@ -7,11 +7,24 @@
 - GitHub 仓库主要同步代码、团队文档、整理后的日志和必要的可视化脚本。
 - 大体积原始数据仍然从团队网盘获取，不直接放到 GitHub。
 - 训练输出、生成结果、可视化视频的目录命名统一使用“代码改动版本名”。
-- 每个人只在自己的功能分支上开发和 push，不要共用别人的分支，也不要直接往 `main` push。
+- 以后最新代码统一以 `main` 为准；我这边更新代码后会同步到 `main`，队友需要更新时直接从 `main` 拉。
+- 个人开发如果需要单独提交，仍建议从 `main` 新建自己的功能分支，不要共用别人的分支。
 
 ## 分支协作规则
 
-每个人按自己的身份或任务，在对应分支工作。
+当前默认同步主线为 `main`。
+
+每次开始工作前，先切到 `main` 并拉最新代码：
+
+```powershell
+git fetch origin
+git switch main
+git pull origin main
+```
+
+如果只是拉取我更新后的最新代码，停在 `main` 即可。
+
+如果你需要自己开发并 push，建议再从最新 `main` 新建自己的功能分支：
 
 例如：
 
@@ -23,8 +36,9 @@
 
 ```powershell
 git fetch origin
-git switch -c feature/B-data origin/feature/B-data
-git pull
+git switch main
+git pull origin main
+git switch -c feature/B-data
 ```
 
 如果你已经在自己的分支上，并且本地已经跟踪远端对应分支：
@@ -53,22 +67,35 @@ git branch -a
 
 ### 切到你自己的功能分支
 
+先确保 `main` 是最新：
+
+```powershell
+git fetch origin
+git switch main
+git pull origin main
+```
+
 例如：
 
 ```powershell
-git switch -c feature/B-data origin/feature/B-data
+git switch -c feature/B-data
 ```
 
 或者：
 
 ```powershell
-git switch -c feature/conv origin/feature/conv
+git switch -c feature/conv
 ```
 
-切过去后先同步：
+新建分支已经基于最新 `main`，这一步之后直接改代码即可。
+
+如果你切回的是已经存在的旧功能分支，先回到 `main` 拉最新，再自己决定是否把 `main` 合到功能分支里：
 
 ```powershell
-git pull
+git switch main
+git pull origin main
+git switch 你的功能分支名
+git merge main
 ```
 
 ### 修改后提交全部改动
@@ -282,25 +309,27 @@ mkdir videos\feature_conv_v1
 - 文献整理统一放到 `article/`
 - 日志整理统一放到 `logging/`
 
-## 方案一接入说明（feature/conv）
+## 方案一接入说明（main）
 
 这一节只针对方案一目前已经落地的改动。
 
-### 1. 先拉取分支
+### 1. 先拉取 main
 
-如果你本地已经有 `feature/conv`：
+以后方案一相关代码和文档也统一从 `main` 拉。
+
+如果你本地已经有 `main`：
 
 ```powershell
-git switch feature/conv
-git pull
+git switch main
+git pull origin main
 ```
 
-如果你本地还没有：
+如果你本地还没有 `main`：
 
 ```powershell
 git fetch origin
-git switch -c feature/conv origin/feature/conv
-git pull
+git switch -c main origin/main
+git pull origin main
 ```
 
 ### 2. 方案一相关文档现在放哪里
@@ -327,7 +356,7 @@ git pull
 
 #### 方案一模型目录
 
-这些文件拉完 `feature/conv` 后会自动出现在本地，不需要手动新建：
+这些文件拉完 `main` 后会自动出现在本地，不需要手动新建：
 
 ```text
 model/plan_one/
@@ -516,7 +545,8 @@ videos/某个版本/
 
 ## Git 使用提醒
 
-- 不要直接往 `main` 提交
-- 开发代码请在对应功能分支上完成
-- push 之前先 `git pull`
+- 最新代码以 `main` 为准，队友更新代码时先从 `main` 拉
+- 如果只是使用最新代码，不需要切到旧的 `feature/conv`
+- 自己要开发并 push 时，建议从最新 `main` 新建对应功能分支
+- push 之前先确认已经同步最新 `main`
 - 如果只改了单个文件，就只 `git add` 那个文件，不要默认 `git add .`

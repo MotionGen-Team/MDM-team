@@ -300,11 +300,22 @@ class TrainLoop:
 
 
     def run_step(self, batch, cond):
+        self.set_plan_one_train_step(self.total_step() + 1)
         self.forward_backward(batch, cond)
         self.mp_trainer.optimize(self.opt)
         self.update_average_model()
         self._anneal_lr()
         self.log_step()
+
+    def set_plan_one_train_step(self, step):
+        if getattr(self.args, 'arch', None) != 'plan_one':
+            return
+        for model in (self.model, self.model_avg):
+            if model is None:
+                continue
+            target = model.module if hasattr(model, 'module') else model
+            if hasattr(target, 'set_train_step'):
+                target.set_train_step(step)
 
     def maybe_append_loss_csv(self, step):
         if self.last_loss is None or step <= 0 or step % self.loss_csv_interval != 0:
@@ -338,12 +349,21 @@ class TrainLoop:
         residual_module = getattr(model, 'residual_tcn', None)
         if summary_module is None or residual_module is None:
             return None
-        summary_logit = getattr(summary_module, 'gate_logit', None)
-        residual_logit = getattr(residual_module, 'gate_logit', None)
-        if summary_logit is None or residual_logit is None:
-            return None
-        summary_gate = torch.sigmoid(summary_logit.detach()).item()
-        residual_gate = torch.sigmoid(residual_logit.detach()).item()
+        if hasattr(summary_module, 'get_gate'):
+            summary_gate = summary_module.get_gate().detach().item()
+        else:
+            summary_logit = getattr(summary_module, 'gate_logit', None)
+            if summary_logit is None:
+                return None
+            summary_gate = torch.sigmoid(summary_logit.detach()).item()
+
+        if hasattr(residual_module, 'get_gate'):
+            residual_gate = residual_module.get_gate().detach().item()
+        else:
+            residual_logit = getattr(residual_module, 'gate_logit', None)
+            if residual_logit is None:
+                return None
+            residual_gate = torch.sigmoid(residual_logit.detach()).item()
         return summary_gate, residual_gate
 
     def maybe_append_hstruct_csv(self, step, motion, cond):

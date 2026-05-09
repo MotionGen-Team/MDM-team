@@ -37,7 +37,11 @@ class SummaryFusion(nn.Module):
             dropout=dropout,
             batch_first=True,
         )
-        self.gate_logit = nn.Parameter(torch.tensor(-3.0))
+        self.gate_logit = nn.Parameter(torch.tensor(-1.3862944))
+        self.register_buffer('current_train_step', torch.zeros((), dtype=torch.long))
+        self.warmup_start_step = 1000
+        self.warmup_end_step = 10000
+        self.warmup_start_scale = 0.25
         # 注入后做一次 layer norm，避免结构增强把时间主线数值尺度拉偏。
         self.out_norm = nn.LayerNorm(d_model)
 
@@ -75,7 +79,7 @@ class SummaryFusion(nn.Module):
         # “当前时刻的全局时间表示，去看这一时刻左腿/右腿/躯干分别在说什么。”
         delta, _ = self.cross_attn(q, kv, kv, need_weights=False)
         delta = delta.view(timesteps, batch_size, channels)
-        gate = torch.sigmoid(self.gate_logit).to(dtype=delta.dtype, device=delta.device)
+        gate = self.get_gate(dtype=delta.dtype, device=delta.device)
 
         # 残差 + 归一化：
         # 保证 summary 注入更像轻量增强，而不是直接重写时间主线。
@@ -97,3 +101,17 @@ class SummaryFusion(nn.Module):
             'gate': gate,
             'h_global_enh': h_global_enh,
         }
+
+    def set_train_step(self, step: int) -> None:
+        self.current_train_step.fill_(int(step))
+
+    def get_gate(self, dtype: torch.dtype | None = None, device: torch.device | None = None) -> torch.Tensor:
+        raw_gate = torch.sigmoid(self.gate_logit)
+        step = self.current_train_step.to(dtype=raw_gate.dtype, device=raw_gate.device)
+        progress = (step - self.warmup_start_step) / (self.warmup_end_step - self.warmup_start_step)
+        progress = progress.clamp(0.0, 1.0)
+        scale = self.warmup_start_scale + (1.0 - self.warmup_start_scale) * progress
+        gate = raw_gate * scale
+        if dtype is not None or device is not None:
+            gate = gate.to(dtype=dtype or gate.dtype, device=device or gate.device)
+        return gate

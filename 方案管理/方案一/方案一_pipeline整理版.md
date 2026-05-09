@@ -36,7 +36,7 @@ h_struct
 
 h_global + S_t
     -> Summary Fusion
-    -> h_global + gate * delta
+    -> h_global + effective_summary_gate * delta
     -> h_global_enh
 
 h_global_enh
@@ -51,7 +51,7 @@ L_t + G_t
 
 F_t + y_base_latent
     -> Residual TCN
-    -> gate * delta_raw
+    -> effective_residual_gate * delta_raw
 
 y_raw = y_base_raw + delta_raw
     -> restore shape
@@ -75,7 +75,7 @@ y_raw = y_base_raw + delta_raw
 - 条件真正进入主干
 - 帧级位置编码真正进入主干
 - foot contact 左右脚映射修正
-- 只在两处加入 gate：
+- 只在两处加入 warmup gate：
   - `SummaryFusion`
   - `ResidualTCN`
 
@@ -104,7 +104,7 @@ y_raw = y_base_raw + delta_raw
 
 ### 2.3 gate 只是注入强度控制，不是新架构
 
-当前这版的 gate 只承担“保守注入”的作用：
+当前这版的 gate 只承担“保守起步 + 逐步释放”的注入强度控制作用：
 
 - `SummaryFusion`
   控制 structure summary 对 `h_global` 的注入幅度
@@ -112,6 +112,13 @@ y_raw = y_base_raw + delta_raw
   控制 refine 修正量对 `y_base_raw` 的扰动幅度
 
 它们不改变主链顺序，也不改变模块职责。
+
+当前推荐组：
+
+```text
+summary_gate:  0.05 -> 0.20, 1000 - 10000 step warmup
+residual_gate: 0.05 -> 0.12, 3000 - 15000 step warmup
+```
 
 ## 3. 共享表示阶段
 
@@ -165,15 +172,16 @@ h_global_enh
 
 ```text
 delta = CrossAttention(h_global, s_t)
-gate = sigmoid(gate_logit)
-h_global_enh = LayerNorm(h_global + gate * delta)
+raw_gate = sigmoid(gate_logit)
+effective_gate = raw_gate * warmup_scale
+h_global_enh = LayerNorm(h_global + effective_gate * delta)
 ```
 
 这意味着：
 
 - `SummaryFusion` 仍然是 cross-attention 注入
 - 没有改成新的分支结构
-- 只是给原本的 summary 注入增加了一个可学习强度系数
+- 只是给原本的 summary 注入增加了一个带 warmup 的可学习强度系数
 
 ### 5.2 为什么这里要加 gate
 
@@ -182,7 +190,16 @@ h_global_enh = LayerNorm(h_global + gate * delta)
 加 gate 后：
 
 - 初始注入很小
-- 如果 summary 确实有用，训练会逐步把 gate 学大
+- `1000 step` 之后按 schedule 逐步释放到 `0.20`
+- 如果 summary 确实有用，训练还能继续微调 `gate_logit`
+
+当前推荐组：
+
+```text
+0 - 1000 step       effective_gate = 0.05
+1000 - 10000 step   线性 warmup 到 0.20
+10000+ step         维持 0.20 附近，并保留 gate_logit 可学习
+```
 
 ## 6. Refine 层
 
@@ -203,7 +220,9 @@ Fusion
 当前只在残差输出端加 gate：
 
 ```text
-delta_raw = sigmoid(gate_logit) * out_proj(x2)
+raw_gate = sigmoid(gate_logit)
+effective_gate = raw_gate * warmup_scale
+delta_raw = effective_gate * out_proj(x2)
 ```
 
 这意味着：
@@ -211,6 +230,14 @@ delta_raw = sigmoid(gate_logit) * out_proj(x2)
 - refine 主链没改
 - 还是两层 residual TCN block
 - 只是防止 `delta_raw` 在训练早期过强地扰动 `y_base_raw`
+
+Residual TCN 更靠近最终 motion 输出，所以释放比 summary 更慢：
+
+```text
+0 - 3000 step       effective_gate = 0.05
+3000 - 15000 step   线性 warmup 到 0.12
+15000+ step         维持 0.12 附近，并保留 gate_logit 可学习
+```
 
 ## 7. 当前版本的关键改动总结
 
@@ -222,8 +249,8 @@ delta_raw = sigmoid(gate_logit) * out_proj(x2)
 
 ### 7.2 新增但尽量保守的改动
 
-- `SummaryFusion` 增加可学习标量 gate
-- `ResidualTCN` 增加可学习标量 gate
+- `SummaryFusion` 增加推荐组 warmup gate
+- `ResidualTCN` 增加推荐组 warmup gate
 
 ### 7.3 明确没有改的内容
 
@@ -255,17 +282,26 @@ step,summary_gate,residual_gate
 
 这个文件的作用是帮助判断：
 
-- gate 是否一直维持很小
-- gate 是否会随训练逐步变大
+- effective gate 是否按 warmup schedule 释放
+- summary 是否在 1000 step 后逐步变大
+- residual 是否在 3000 step 后逐步变大
 - 当前 loss 落后是否与分支注入强度相关
+
+当前推荐组预期趋势：
+
+```text
+step 1000   summary_gate ~= 0.05   residual_gate ~= 0.05
+step 10000  summary_gate ~= 0.20   residual_gate ~= 0.09
+step 15000  summary_gate ~= 0.20   residual_gate ~= 0.12
+```
 
 ## 9. 当前建议
 
 当前最合理的使用方式不是继续大改架构，而是：
 
 1. 保持当前主结构。
-2. 跑 gate 版短程训练。
+2. 跑推荐组 warmup gate 短程训练。
 3. 同时看 loss 和 `plan_one_gate.csv`。
-4. 再决定是否调学习率或初始化。
+4. 如果 10000 step 后仍落后，再拆开 summary/refine warmup 做对照。
 
 也就是说，当前方案一已经不再处于“继续拆新模块”的阶段，而是进入“验证现有结构、控制注入强度、稳定训练表现”的阶段。

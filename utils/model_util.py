@@ -19,6 +19,8 @@ def load_model_wo_clip(model, state_dict):
         'embed_timestep.sequence_pos_encoder',
         'temporal_tcn.',
         'text_proj.',
+        'global_branch.summary_fusion.current_train_step',
+        'residual_tcn.current_train_step',
     )
     unexpected_missing_keys = [k for k in missing_keys if not k.startswith(allowed_missing_prefixes)]
     assert len(unexpected_missing_keys) == 0, f'Unexpected missing keys: {unexpected_missing_keys}'

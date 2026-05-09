@@ -124,7 +124,11 @@ class CoordinationResidualTCN(nn.Module):
         self.block2 = ResidualTCNBlock(channels=channels, dilation=2, dropout=dropout)
         # 最后把 2D latent 修正结果映射回 motion residual 空间 C。
         self.out_proj = nn.Linear(channels, out_dim)
-        self.gate_logit = nn.Parameter(torch.tensor(-3.0))
+        self.gate_logit = nn.Parameter(torch.tensor(-1.9924302))
+        self.register_buffer('current_train_step', torch.zeros((), dtype=torch.long))
+        self.warmup_start_step = 3000
+        self.warmup_end_step = 15000
+        self.warmup_start_scale = 0.4166667
 
     def forward(self, r_in: torch.Tensor) -> Dict[str, torch.Tensor]:
         # 第一个残差 TCN block：优先修正短时间范围内的局部不协调。
@@ -141,7 +145,7 @@ class CoordinationResidualTCN(nn.Module):
         # 4. 条件化 refine:
         #    后面如果想让 refine 对文本或时间步更敏感，可以把 `c` 以 FiLM/gating 方式注入。
         # 输出投影：把 refine latent 映射回 motion residual。
-        gate = torch.sigmoid(self.gate_logit).to(dtype=x2.dtype, device=x2.device)
+        gate = self.get_gate(dtype=x2.dtype, device=x2.device)
         delta_raw = gate * self.out_proj(x2)
         return {
             'x1': x1,
@@ -149,3 +153,17 @@ class CoordinationResidualTCN(nn.Module):
             'gate': gate,
             'delta_raw': delta_raw,
         }
+
+    def set_train_step(self, step: int) -> None:
+        self.current_train_step.fill_(int(step))
+
+    def get_gate(self, dtype: torch.dtype | None = None, device: torch.device | None = None) -> torch.Tensor:
+        raw_gate = torch.sigmoid(self.gate_logit)
+        step = self.current_train_step.to(dtype=raw_gate.dtype, device=raw_gate.device)
+        progress = (step - self.warmup_start_step) / (self.warmup_end_step - self.warmup_start_step)
+        progress = progress.clamp(0.0, 1.0)
+        scale = self.warmup_start_scale + (1.0 - self.warmup_start_scale) * progress
+        gate = raw_gate * scale
+        if dtype is not None or device is not None:
+            gate = gate.to(dtype=dtype or gate.dtype, device=device or gate.device)
+        return gate
