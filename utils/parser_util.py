@@ -218,7 +218,6 @@ def add_sampling_options(parser):
                        help="Number of repetitions, per sample (text prompt/action)")
     group.add_argument("--guidance_param", default=2.5, type=float,
                        help="For classifier-free sampling - specifies the s parameter, as defined in the paper.")
-
     group.add_argument("--autoregressive", action='store_true', help="If true, and we use a prefix model will generate motions in an autoregressive loop.")
     group.add_argument("--autoregressive_include_prefix", action='store_true', help="If true, include the init prefix in the output, otherwise, will drop it.")
     group.add_argument("--autoregressive_init", default='data', type=str, choices=['data', 'isaac'], 
@@ -277,6 +276,12 @@ def add_evaluation_options(parser):
                         help="Sets the source of the init frames, either from the dataset or isaac init poses.")
     group.add_argument("--guidance_param", default=2.5, type=float,
                        help="For classifier-free sampling - specifies the s parameter, as defined in the paper.")
+    group.add_argument("--replication_times", default=-1, type=int,
+                       help="Override the number of evaluation replications. "
+                            "Use -1 to keep the default value from eval_mode.")
+    group.add_argument("--skip_fid", action='store_true',
+                       help="Skip FID during HumanML evaluation. Useful when scipy sqrtm "
+                            "produces a large imaginary component for unstable covariance matrices.")
 
 
 def get_cond_mode(args):
