@@ -384,6 +384,12 @@ if __name__ == '__main__':
     else:
         raise ValueError()
 
+    if args.replication_times > 0:
+        replication_times = args.replication_times
+        print(f'Override replication_times to [{replication_times}]')
+    if args.skip_fid and 'fid' in metrics_to_run:
+        metrics_to_run.remove('fid')
+        print('Skip FID metric by --skip_fid')
 
     dist_util.setup_dist(args.device)
     logger.configure()
