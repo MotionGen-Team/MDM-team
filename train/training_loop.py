@@ -357,7 +357,9 @@ class TrainLoop:
                 return None
             summary_gate = torch.sigmoid(summary_logit.detach()).item()
 
-        if hasattr(residual_module, 'get_gate'):
+        if getattr(model, 'refine_mode', 'full') == 'off':
+            residual_gate = 0.0
+        elif hasattr(residual_module, 'get_gate'):
             residual_gate = residual_module.get_gate().detach().item()
         else:
             residual_logit = getattr(residual_module, 'gate_logit', None)

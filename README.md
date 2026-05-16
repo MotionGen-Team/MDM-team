@@ -131,6 +131,8 @@ python -m train.train_mdm ^
 --plan_one_root_mode        all_joints | torso_only | none
 --plan_one_struct_pos_mode  all_joints | torso_only | none
 --plan_one_struct_cond_mode all_joints | torso_only | none
+--plan_one_local_mode       full | zero
+--plan_one_refine_mode      full | off
 ```
 
 ## 生成动作

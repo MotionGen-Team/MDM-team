@@ -61,6 +61,8 @@ class PlanOneMDM(nn.Module):
         root_broadcast_mode: str = 'all_joints',
         struct_pos_inject_mode: str = 'all_joints',
         struct_cond_inject_mode: str = 'all_joints',
+        local_mode: str = 'full',
+        refine_mode: str = 'full',
         text_cond_dim: int | None = None,
         cond_mode: str = 'no_cond',
         cond_mask_prob: float = 0.0,
@@ -84,6 +86,12 @@ class PlanOneMDM(nn.Module):
         self.root_broadcast_mode = root_broadcast_mode
         self.struct_pos_inject_mode = struct_pos_inject_mode
         self.struct_cond_inject_mode = struct_cond_inject_mode
+        if local_mode not in ('full', 'zero'):
+            raise ValueError(f'Unsupported local_mode: {local_mode}')
+        if refine_mode not in ('full', 'off'):
+            raise ValueError(f'Unsupported refine_mode: {refine_mode}')
+        self.local_mode = local_mode
+        self.refine_mode = refine_mode
         self.cond_mode = cond_mode
         self.cond_mask_prob = cond_mask_prob
         self.dataset = dataset
@@ -283,9 +291,6 @@ class PlanOneMDM(nn.Module):
         shared_outputs = self.shared_embedding(x_t, c=c)
         shared_outputs = self.inject_condition_and_position(shared_outputs, c=c, nframes=nframes)
 
-        # 第二层局部分支：围绕 body groups 做局部时序建模，输出 L_t。
-        local_outputs = self.local_branch(shared_outputs['h_struct'])
-
         # 第二层全局分支：先从 h_struct 构造 group summary，再把 summary
         # 融入 h_global，最后通过 GQA Transformer 输出 G_t。
         global_outputs = self.global_branch(
@@ -293,6 +298,17 @@ class PlanOneMDM(nn.Module):
             h_global=shared_outputs['h_global'],
             c=c,
         )
+
+        # 第二层局部分支：围绕 body groups 做局部时序建模，输出 L_t。
+        # 消融时保留 fusion 的输入形状，但不让 local 信息进入后续预测。
+        if self.local_mode == 'full':
+            local_outputs = self.local_branch(shared_outputs['h_struct'])
+        elif self.local_mode == 'zero':
+            local_outputs = {
+                'l_t': torch.zeros_like(global_outputs['g_t']),
+            }
+        else:
+            raise RuntimeError(f'Unsupported local_mode during forward: {self.local_mode}')
 
         # 第三层输出与修正：
         # 1. 融合 local/global 两路特征
@@ -302,7 +318,16 @@ class PlanOneMDM(nn.Module):
         head_outputs = self.refine_heads(fusion_outputs['f_t'])
 
         r_in = torch.cat([fusion_outputs['f_t'], head_outputs['y_base_latent']], dim=-1)
-        residual_outputs = self.residual_tcn(r_in)
+        if self.refine_mode == 'full':
+            residual_outputs = self.residual_tcn(r_in)
+        elif self.refine_mode == 'off':
+            zero_delta = torch.zeros_like(head_outputs['y_base_raw'])
+            residual_outputs = {
+                'gate': zero_delta.new_zeros(()),
+                'delta_raw': zero_delta,
+            }
+        else:
+            raise RuntimeError(f'Unsupported refine_mode during forward: {self.refine_mode}')
 
         # 最终输出仍保持和官方 MDM 一致的 motion-space 形状 [B, J, F, T]，
         # 这样 diffusion 外围和训练/采样接口都不需要跟着改。

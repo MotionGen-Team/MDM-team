@@ -76,6 +76,8 @@ def get_model_args(args, data):
     plan_one_root_mode = args.__dict__.get('plan_one_root_mode', 'all_joints')
     plan_one_struct_pos_mode = args.__dict__.get('plan_one_struct_pos_mode', 'all_joints')
     plan_one_struct_cond_mode = args.__dict__.get('plan_one_struct_cond_mode', 'all_joints')
+    plan_one_local_mode = args.__dict__.get('plan_one_local_mode', 'full')
+    plan_one_refine_mode = args.__dict__.get('plan_one_refine_mode', 'full')
 
     if args.arch == 'plan_one':
         if data_rep != 'hml_vec':
@@ -98,6 +100,8 @@ def get_model_args(args, data):
             'root_broadcast_mode': plan_one_root_mode,
             'struct_pos_inject_mode': plan_one_struct_pos_mode,
             'struct_cond_inject_mode': plan_one_struct_cond_mode,
+            'local_mode': plan_one_local_mode,
+            'refine_mode': plan_one_refine_mode,
             'cond_mode': cond_mode,
             'cond_mask_prob': args.cond_mask_prob,
             'dataset': args.dataset,

@@ -132,6 +132,12 @@ def add_model_options(parser):
     group.add_argument("--plan_one_struct_cond_mode", default='all_joints',
                        choices=['all_joints', 'torso_only', 'none'], type=str,
                        help="For plan_one only, controls how timestep/text condition is injected into h_struct.")
+    group.add_argument("--plan_one_local_mode", default='full',
+                       choices=['full', 'zero'], type=str,
+                       help="For plan_one only, ablates the local branch by replacing L_t with zeros when set to zero.")
+    group.add_argument("--plan_one_refine_mode", default='full',
+                       choices=['full', 'off'], type=str,
+                       help="For plan_one only, ablates residual TCN refinement by setting delta_raw to zero when set to off.")
     
 
     group.add_argument("--multi_target_cond", action='store_true', help="If true, enable multi-target conditioning (aka Sigal's model).")
