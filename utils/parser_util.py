@@ -133,8 +133,8 @@ def add_model_options(parser):
                        choices=['all_joints', 'torso_only', 'none'], type=str,
                        help="For plan_one only, controls how timestep/text condition is injected into h_struct.")
     group.add_argument("--plan_one_local_mode", default='full',
-                       choices=['full', 'zero'], type=str,
-                       help="For plan_one only, ablates the local branch by replacing L_t with zeros when set to zero.")
+                       choices=['full', 'zero', 'shared_gate'], type=str,
+                       help="For plan_one only. Use zero to ablate local, or shared_gate for shared leg temporal filters with a capped local gate.")
     group.add_argument("--plan_one_refine_mode", default='full',
                        choices=['full', 'off'], type=str,
                        help="For plan_one only, ablates residual TCN refinement by setting delta_raw to zero when set to off.")
