@@ -127,11 +127,41 @@ def default_sample_dir(model_path: str, tag: str, seed: int, num_samples: int) -
     return os.path.join(model_dir, f"motion_quality_{tag}_{niter}_seed{seed}_n{num_samples}")
 
 
+def format_gate_tag(value: float) -> str:
+    return f"localgate_{value:g}".replace("-", "m").replace(".", "p")
+
+
+def maybe_apply_local_gate_override(model, local_gate: Optional[float]) -> None:
+    if local_gate is None:
+        return
+    local_branch = getattr(model, "local_branch", None)
+    if local_branch is None or not hasattr(local_branch, "local_gate_logit"):
+        raise ValueError("--local_gate_override requires a plan_one shared_gate model with local_gate_logit.")
+
+    local_gate_max = float(getattr(local_branch, "local_gate_max", 1.0))
+    if local_gate < 0 or local_gate > local_gate_max:
+        raise ValueError(
+            f"--local_gate_override must be in [0, {local_gate_max:g}], got {local_gate:g}."
+        )
+
+    if local_gate == 0:
+        logit = -100.0
+    else:
+        prob = min(max(local_gate / local_gate_max, 1e-8), 1.0 - 1e-8)
+        logit = math.log(prob / (1.0 - prob))
+
+    with torch.no_grad():
+        local_branch.local_gate_logit.fill_(logit)
+    effective_gate = torch.sigmoid(local_branch.local_gate_logit).item() * local_gate_max
+    print(f"Overrode local_gate to {effective_gate:.6g} via local_gate_logit={logit:.6g}.")
+
+
 def sample_checkpoint_to_results(
     model_path: str,
     quality_args: argparse.Namespace,
     tag: str,
     output_dir: str,
+    apply_overrides: bool = True,
 ) -> str:
     from data_loaders.get_data import get_dataset_loader
     from utils import dist_util
@@ -158,6 +188,8 @@ def sample_checkpoint_to_results(
 
     model, diffusion = create_model_and_diffusion(eval_args, gen_loader)
     load_saved_model(model, model_path, use_avg=eval_args.use_ema)
+    if apply_overrides:
+        maybe_apply_local_gate_override(model, quality_args.local_gate_override)
     if eval_args.guidance_param != 1:
         model = ClassifierFreeSampleModel(model)
     model.to(dist_util.dev())
@@ -589,14 +621,24 @@ def resolve_motion_source(
     quality_args: argparse.Namespace,
     tag: str,
     output_dir: str,
+    apply_overrides: bool = True,
 ) -> str:
     path = resolve_input_path(path) if not path.endswith(".pt") else path
     if not os.path.exists(path):
         raise FileNotFoundError(path)
     if path.endswith(".pt"):
-        sample_dir = output_dir or default_sample_dir(path, tag, quality_args.seed, quality_args.eval_num_samples)
+        sample_tag = tag
+        if apply_overrides and quality_args.local_gate_override is not None:
+            sample_tag = f"{tag}_{format_gate_tag(quality_args.local_gate_override)}"
+        sample_dir = output_dir or default_sample_dir(path, sample_tag, quality_args.seed, quality_args.eval_num_samples)
         print(f"Sampling checkpoint [{path}] to [{sample_dir}] before quality evaluation.")
-        return sample_checkpoint_to_results(path, quality_args, tag=tag, output_dir=sample_dir)
+        return sample_checkpoint_to_results(
+            path,
+            quality_args,
+            tag=tag,
+            output_dir=sample_dir,
+            apply_overrides=apply_overrides,
+        )
     return path
 
 
@@ -620,6 +662,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sample_batch_size", default=32, type=int, help="Sampling batch size when input is a checkpoint.")
     parser.add_argument("--sample_output_dir", default="", help="Where to save sampled target results.npy when input is a checkpoint.")
     parser.add_argument("--baseline_sample_output_dir", default="", help="Where to save sampled baseline results.npy.")
+    parser.add_argument(
+        "--local_gate_override",
+        default=None,
+        type=float,
+        help="For plan_one shared_gate checkpoints, override the effective local gate during target sampling.",
+    )
     parser.add_argument("--split", default="test", choices=["train", "val", "test"])
     parser.add_argument("--guidance_param", default=2.5, type=float)
     parser.add_argument("--seed", default=10, type=int)
@@ -640,7 +688,13 @@ def main() -> None:
     if not source_path:
         raise ValueError("Please pass --model_path checkpoint.pt or --input_path results.npy.")
 
-    input_path = resolve_motion_source(source_path, args, tag="target", output_dir=args.sample_output_dir)
+    input_path = resolve_motion_source(
+        source_path,
+        args,
+        tag="target",
+        output_dir=args.sample_output_dir,
+        apply_overrides=True,
+    )
     output_prefix = args.output_prefix or default_output_prefix(input_path)
 
     all_rows: List[Dict[str, float]] = []
@@ -652,6 +706,8 @@ def main() -> None:
         "path": input_path,
         "summary": target_summary,
     }
+    if args.local_gate_override is not None:
+        payload["target"]["local_gate_override"] = args.local_gate_override
     print_summary("Target summary", target_summary)
 
     if args.baseline_path:
@@ -660,6 +716,7 @@ def main() -> None:
             args,
             tag="baseline",
             output_dir=args.baseline_sample_output_dir,
+            apply_overrides=False,
         )
         baseline_rows, baseline_summary = evaluate_file(args, baseline_path, "baseline")
         all_rows = baseline_rows + all_rows

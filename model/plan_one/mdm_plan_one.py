@@ -86,7 +86,7 @@ class PlanOneMDM(nn.Module):
         self.root_broadcast_mode = root_broadcast_mode
         self.struct_pos_inject_mode = struct_pos_inject_mode
         self.struct_cond_inject_mode = struct_cond_inject_mode
-        if local_mode not in ('full', 'zero', 'shared_gate'):
+        if local_mode not in ('full', 'zero', 'shared_gate', 'shared_group_gate'):
             raise ValueError(f'Unsupported local_mode: {local_mode}')
         if refine_mode not in ('full', 'off'):
             raise ValueError(f'Unsupported refine_mode: {refine_mode}')
@@ -156,7 +156,10 @@ class PlanOneMDM(nn.Module):
             dropout=dropout,
             root_broadcast_mode=root_broadcast_mode,
         )
-        local_branch_variant = 'shared_gate' if local_mode == 'shared_gate' else 'full'
+        if local_mode in ('shared_gate', 'shared_group_gate'):
+            local_branch_variant = local_mode
+        else:
+            local_branch_variant = 'full'
         self.local_branch = LocalBranch(
             d_struct=d_struct,
             d_model=d_model,
@@ -303,7 +306,7 @@ class PlanOneMDM(nn.Module):
 
         # 第二层局部分支：围绕 body groups 做局部时序建模，输出 L_t。
         # 消融时保留 fusion 的输入形状，但不让 local 信息进入后续预测。
-        if self.local_mode in ('full', 'shared_gate'):
+        if self.local_mode in ('full', 'shared_gate', 'shared_group_gate'):
             local_outputs = self.local_branch(shared_outputs['h_struct'])
         elif self.local_mode == 'zero':
             local_outputs = {

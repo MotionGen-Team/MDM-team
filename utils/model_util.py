@@ -19,6 +19,7 @@ def load_model_wo_clip(model, state_dict):
         'embed_timestep.sequence_pos_encoder',
         'temporal_tcn.',
         'text_proj.',
+        'fusion.local_gate_logit',
         'global_branch.summary_fusion.current_train_step',
         'residual_tcn.current_train_step',
     )
