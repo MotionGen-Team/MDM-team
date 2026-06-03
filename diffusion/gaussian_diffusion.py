@@ -137,6 +137,9 @@ class GaussianDiffusion:
         lambda_vel_rcxyz=0.,
         lambda_fc=0.,
         lambda_target_loc=0.,
+        lambda_hml_contact=0.,
+        lambda_hml_contact_vel=0.,
+        lambda_hml_contact_geo=0.,
         **kargs,
     ):
         self.model_mean_type = model_mean_type
@@ -157,9 +160,14 @@ class GaussianDiffusion:
         self.lambda_root_vel = lambda_root_vel
         self.lambda_vel_rcxyz = lambda_vel_rcxyz
         self.lambda_fc = lambda_fc
+        self.lambda_hml_contact = lambda_hml_contact
+        self.lambda_hml_contact_vel = lambda_hml_contact_vel
+        self.lambda_hml_contact_geo = lambda_hml_contact_geo
 
         if self.lambda_rcxyz > 0. or self.lambda_vel > 0. or self.lambda_root_vel > 0. or \
-                self.lambda_vel_rcxyz > 0. or self.lambda_fc > 0. or self.lambda_target_loc > 0.:
+                self.lambda_vel_rcxyz > 0. or self.lambda_fc > 0. or self.lambda_target_loc > 0. or \
+                self.lambda_hml_contact > 0. or self.lambda_hml_contact_vel > 0. or \
+                self.lambda_hml_contact_geo > 0.:
             assert self.loss_type == LossType.MSE, 'Geometric losses are supported by MSE loss type only!'
 
         # Use float64 for accuracy.
@@ -1345,18 +1353,121 @@ class GaussianDiffusion:
                                             model_kwargs['y']['lengths'], dataset.t2m_dataset.opt.joints_num, model.all_goal_joint_names, 
                                             model_kwargs['y']['target_joint_names'], model_kwargs['y']['is_heading'])
                 terms["target_loc"] = masked_goal_l2(pred_target, ref_target, model_kwargs['y'], model.all_goal_joint_names)
-                            
+
+            if self.lambda_hml_contact > 0. or self.lambda_hml_contact_vel > 0. or self.lambda_hml_contact_geo > 0.:
+                assert self.model_mean_type == ModelMeanType.START_X, 'HumanML contact losses support only X_start prediction.'
+                hml_terms = self.humanml_contact_losses(target, model_output, mask, dataset)
+                terms.update(hml_terms)
 
             terms["loss"] = terms["rot_mse"] + terms.get('vb', 0.) +\
                             (self.lambda_vel * terms.get('vel_mse', 0.)) +\
                             (self.lambda_rcxyz * terms.get('rcxyz_mse', 0.)) + \
                             (self.lambda_target_loc * terms.get('target_loc', 0.)) + \
-                            (self.lambda_fc * terms.get('fc', 0.))
+                            (self.lambda_fc * terms.get('fc', 0.)) + \
+                            (self.lambda_hml_contact * terms.get('hml_contact', 0.)) + \
+                            (self.lambda_hml_contact_vel * terms.get('hml_contact_vel', 0.)) + \
+                            (self.lambda_hml_contact_geo * terms.get('hml_contact_geo', 0.))
 
         else:
             raise NotImplementedError(self.loss_type)
 
         return terms
+
+    def humanml_contact_losses(self, target, model_output, mask, dataset):
+        if self.data_rep != 'hml_vec':
+            raise ValueError('HumanML contact losses require hml_vec data representation.')
+        if target.shape[1] < 263 or model_output.shape[1] < 263:
+            raise ValueError(f'Expected HumanML 263-D vectors, got {target.shape[1]} channels.')
+        if not hasattr(dataset, 'mean_gpu') or not hasattr(dataset, 'std_gpu'):
+            raise ValueError('HumanML contact losses require dataset.mean_gpu and dataset.std_gpu.')
+
+        mean = dataset.mean_gpu.to(device=target.device, dtype=target.dtype).view(1, -1, 1, 1)
+        std = dataset.std_gpu.to(device=target.device, dtype=target.dtype).view(1, -1, 1, 1)
+        target_denorm = target * std + mean
+        pred_denorm = model_output * std + mean
+
+        terms = {}
+
+        # HumanML layout:
+        # 193:259 local velocity, 22 joints * 3; 259:263 foot contact.
+        target_contact = target_denorm[:, 259:263, :, :]
+        pred_contact = pred_denorm[:, 259:263, :, :]
+        terms['hml_contact'] = self.masked_l2(pred_contact, target_contact, mask)
+
+        pred_local_vel = pred_denorm[:, 193:259, :, :].reshape(target.shape[0], 22, 3, target.shape[-1])
+        # HumanML contact channels are concatenated as [left ankle, left foot, right ankle, right foot].
+        foot_joint_ids = [7, 10, 8, 11]
+        pred_foot_vel = pred_local_vel[:, foot_joint_ids, :, :]
+        contact_mask = (target_contact > 0.5).to(dtype=pred_foot_vel.dtype)
+        contact_mask = contact_mask * mask.to(dtype=pred_foot_vel.dtype)
+        vel_loss = pred_foot_vel.pow(2) * contact_mask
+        denom = contact_mask.sum(dim=(1, 2, 3)) * pred_foot_vel.shape[2]
+        terms['hml_contact_vel'] = vel_loss.sum(dim=(1, 2, 3)) / (denom + 1e-8)
+
+        if self.lambda_hml_contact_geo > 0.:
+            terms.update(self.humanml_contact_geometry_losses(target_denorm, pred_denorm, mask))
+
+        return terms
+
+    def humanml_contact_geometry_losses(self, target_denorm, pred_denorm, mask):
+        target_seq = target_denorm.squeeze(2).permute(0, 2, 1).contiguous()
+        pred_seq = pred_denorm.squeeze(2).permute(0, 2, 1).contiguous()
+
+        joints_num = 22 if target_seq.shape[-1] == 263 else 21
+        if joints_num != 22:
+            raise ValueError('HumanML contact geometry loss currently supports HumanML 22-joint vectors only.')
+
+        target_xyz = motion_process.recover_from_ric(target_seq, joints_num)
+        pred_xyz = motion_process.recover_from_ric(pred_seq, joints_num)
+
+        # HumanML contact channels are concatenated as [left ankle, left foot, right ankle, right foot].
+        foot_joint_ids = [7, 10, 8, 11]
+        target_feet = target_xyz[:, :, foot_joint_ids, :]
+        pred_feet = pred_xyz[:, :, foot_joint_ids, :]
+
+        valid_frames = mask[:, 0, 0, :].to(dtype=pred_denorm.dtype)
+
+        valid_bool = valid_frames > 0.5
+        target_foot_y = target_feet[..., 1]
+        masked_target_y = target_foot_y.masked_fill(~valid_bool.unsqueeze(-1), float('inf'))
+        target_floor = masked_target_y.amin(dim=(1, 2), keepdim=True)
+        fallback_floor = target_foot_y.amin(dim=(1, 2), keepdim=True)
+        target_floor = torch.where(torch.isfinite(target_floor), target_floor, fallback_floor)
+
+        target_height = target_foot_y - target_floor
+        target_delta = target_feet[:, 1:] - target_feet[:, :-1]
+        target_vertical_delta = target_delta[..., 1].abs()
+        valid_delta = valid_bool[:, :-1] & valid_bool[:, 1:]
+
+        contact_height_threshold = 0.05
+        contact_vel_threshold = 0.02
+        delta_contact_mask = (
+            (target_height[:, :-1] <= contact_height_threshold)
+            & (target_vertical_delta <= contact_vel_threshold)
+            & valid_delta.unsqueeze(-1)
+        )
+        delta_mask = delta_contact_mask.to(dtype=pred_denorm.dtype)
+
+        pred_delta = pred_feet[:, 1:] - pred_feet[:, :-1]
+        pred_delta_xz = pred_delta[..., [0, 2]]
+        slide_loss = pred_delta_xz.pow(2).sum(dim=-1) * delta_mask
+        slide_denom = delta_mask.sum(dim=(1, 2))
+        slide_loss = slide_loss.sum(dim=(1, 2)) / (slide_denom + 1e-8)
+
+        vertical_loss = pred_delta[..., 1].pow(2) * delta_mask
+        vertical_loss = vertical_loss.sum(dim=(1, 2)) / (slide_denom + 1e-8)
+
+        pred_height = pred_feet[:, :-1, :, 1] - target_floor
+        height_loss = (pred_height - target_height[:, :-1]).pow(2) * delta_mask
+        height_denom = slide_denom
+        height_loss = height_loss.sum(dim=(1, 2)) / (height_denom + 1e-8)
+
+        return {
+            'hml_contact_geo_slide': slide_loss,
+            'hml_contact_geo_vertical': vertical_loss,
+            'hml_contact_geo_height': height_loss,
+            'hml_contact_geo': slide_loss + vertical_loss + height_loss,
+        }
 
     def fc_loss_rot_repr(self, gt_xyz, pred_xyz, mask):
         def to_np_cpu(x):

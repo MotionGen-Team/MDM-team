@@ -19,7 +19,6 @@ def load_model_wo_clip(model, state_dict):
         'embed_timestep.sequence_pos_encoder',
         'temporal_tcn.',
         'text_proj.',
-        'fusion.local_gate_logit',
         'global_branch.summary_fusion.current_train_step',
         'residual_tcn.current_train_step',
     )
@@ -77,8 +76,6 @@ def get_model_args(args, data):
     plan_one_root_mode = args.__dict__.get('plan_one_root_mode', 'all_joints')
     plan_one_struct_pos_mode = args.__dict__.get('plan_one_struct_pos_mode', 'all_joints')
     plan_one_struct_cond_mode = args.__dict__.get('plan_one_struct_cond_mode', 'all_joints')
-    plan_one_local_mode = args.__dict__.get('plan_one_local_mode', 'full')
-    plan_one_refine_mode = args.__dict__.get('plan_one_refine_mode', 'full')
 
     if args.arch == 'plan_one':
         if data_rep != 'hml_vec':
@@ -101,8 +98,6 @@ def get_model_args(args, data):
             'root_broadcast_mode': plan_one_root_mode,
             'struct_pos_inject_mode': plan_one_struct_pos_mode,
             'struct_cond_inject_mode': plan_one_struct_cond_mode,
-            'local_mode': plan_one_local_mode,
-            'refine_mode': plan_one_refine_mode,
             'cond_mode': cond_mode,
             'cond_mask_prob': args.cond_mask_prob,
             'dataset': args.dataset,
@@ -149,6 +144,10 @@ def create_gaussian_diffusion(args):
         lambda_target_loc = args.lambda_target_loc
     else:
         lambda_target_loc = 0.
+    lambda_hml_contact = args.__dict__.get('lambda_hml_contact', 0.)
+    lambda_hml_contact_vel = args.__dict__.get('lambda_hml_contact_vel', 0.)
+    lambda_hml_contact_geo = args.__dict__.get('lambda_hml_contact_geo', 0.)
+    data_rep = 'hml_vec' if args.dataset in ['humanml', 'kit'] else 'rot6d'
 
     return SpacedDiffusion(
         use_timesteps=space_timesteps(steps, timestep_respacing),
@@ -167,10 +166,14 @@ def create_gaussian_diffusion(args):
         ),
         loss_type=loss_type,
         rescale_timesteps=rescale_timesteps,
+        data_rep=data_rep,
         lambda_vel=args.lambda_vel,
         lambda_rcxyz=args.lambda_rcxyz,
         lambda_fc=args.lambda_fc,
         lambda_target_loc=lambda_target_loc,
+        lambda_hml_contact=lambda_hml_contact,
+        lambda_hml_contact_vel=lambda_hml_contact_vel,
+        lambda_hml_contact_geo=lambda_hml_contact_geo,
     )
 
 def load_saved_model(model, model_path, use_avg: bool=False):  # use_avg_model

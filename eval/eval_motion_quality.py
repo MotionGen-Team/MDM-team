@@ -535,9 +535,74 @@ def evaluate_file(args, path: str, tag: str) -> Tuple[List[Dict[str, float]], Di
             contact_vel_threshold=args.contact_vel_threshold,
         )
         row["tag"] = tag
+        row["motion_group"] = classify_motion_group(row)
         rows.append(row)
 
     return rows, summarize_rows(rows)
+
+
+def classify_motion_group(row: Dict[str, float]) -> str:
+    text = str(row.get("text", "")).lower()
+    locomotion_words = (
+        "walk",
+        "run",
+        "jog",
+        "step",
+        "stroll",
+        "pace",
+        "march",
+        "limp",
+        "skip",
+        "move forward",
+        "moves forward",
+        "walking",
+        "running",
+    )
+    airborne_words = (
+        "jump",
+        "hop",
+        "leap",
+        "air",
+        "kick",
+        "vault",
+    )
+    static_words = (
+        "stand",
+        "standing",
+        "sit",
+        "sitting",
+        "pose",
+        "stretch",
+        "arms",
+        "wave",
+        "clap",
+        "bend",
+    )
+
+    left_range = row.get("left_leg_motion_range", float("nan"))
+    right_range = row.get("right_leg_motion_range", float("nan"))
+    leg_range = finite_mean([left_range, right_range])
+    no_contact = row.get("no_contact_ratio", float("nan"))
+    alternation = row.get("contact_alternation", float("nan"))
+    step_score = row.get("step_timing_score", float("nan"))
+
+    text_locomotion = any(word in text for word in locomotion_words)
+    text_airborne = any(word in text for word in airborne_words)
+    text_static = any(word in text for word in static_words)
+
+    if text_airborne or (np.isfinite(no_contact) and no_contact > 0.35 and not text_locomotion):
+        return "airborne_or_jump"
+    if text_locomotion or (
+        np.isfinite(leg_range)
+        and leg_range > 0.25
+        and np.isfinite(alternation)
+        and alternation > 0.15
+        and np.isfinite(step_score)
+    ):
+        return "locomotion"
+    if text_static or (np.isfinite(leg_range) and leg_range < 0.12):
+        return "static_or_upper"
+    return "other"
 
 
 def summarize_rows(rows: List[Dict[str, float]]) -> Dict[str, Dict[str, float]]:
@@ -549,6 +614,18 @@ def summarize_rows(rows: List[Dict[str, float]]) -> Dict[str, Dict[str, float]]:
             "std": finite_std(values),
         }
     return summary
+
+
+def summarize_grouped_rows(rows: List[Dict[str, float]]) -> Dict[str, dict]:
+    grouped = {}
+    group_names = sorted({str(row.get("motion_group", "other")) for row in rows})
+    for group in group_names:
+        group_rows = [row for row in rows if row.get("motion_group", "other") == group]
+        grouped[group] = {
+            "count": len(group_rows),
+            "summary": summarize_rows(group_rows),
+        }
+    return grouped
 
 
 def compare_summaries(
@@ -578,9 +655,20 @@ def compare_summaries(
     return comparison
 
 
+def compare_grouped_summaries(baseline: Dict[str, dict], target: Dict[str, dict]) -> Dict[str, dict]:
+    comparison = {}
+    for group in sorted(set(baseline.keys()) & set(target.keys())):
+        comparison[group] = {
+            "baseline_count": baseline[group]["count"],
+            "target_count": target[group]["count"],
+            "comparison": compare_summaries(baseline[group]["summary"], target[group]["summary"]),
+        }
+    return comparison
+
+
 def write_csv(path: str, rows: List[Dict[str, float]]) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    fieldnames = ["tag", "sample_index", "text", "length"] + metric_keys()
+    fieldnames = ["tag", "motion_group", "sample_index", "text", "length"] + metric_keys()
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
@@ -701,10 +789,12 @@ def main() -> None:
     payload = {}
 
     target_rows, target_summary = evaluate_file(args, input_path, "target")
+    target_grouped_summary = summarize_grouped_rows(target_rows)
     all_rows.extend(target_rows)
     payload["target"] = {
         "path": input_path,
         "summary": target_summary,
+        "grouped_summary": target_grouped_summary,
     }
     if args.local_gate_override is not None:
         payload["target"]["local_gate_override"] = args.local_gate_override
@@ -719,12 +809,22 @@ def main() -> None:
             apply_overrides=False,
         )
         baseline_rows, baseline_summary = evaluate_file(args, baseline_path, "baseline")
-        all_rows = baseline_rows + all_rows
+        baseline_groups = {row["sample_index"]: row["motion_group"] for row in baseline_rows}
+        for row in target_rows:
+            if row["sample_index"] in baseline_groups:
+                row["motion_group"] = baseline_groups[row["sample_index"]]
+        target_grouped_summary = summarize_grouped_rows(target_rows)
+        payload["target"]["grouped_summary"] = target_grouped_summary
+
+        baseline_grouped_summary = summarize_grouped_rows(baseline_rows)
+        all_rows = baseline_rows + target_rows
         payload["baseline"] = {
             "path": baseline_path,
             "summary": baseline_summary,
+            "grouped_summary": baseline_grouped_summary,
         }
         payload["comparison"] = compare_summaries(baseline_summary, target_summary)
+        payload["grouped_comparison"] = compare_grouped_summaries(baseline_grouped_summary, target_grouped_summary)
         print_summary("Baseline summary", baseline_summary)
 
     csv_path = output_prefix + ".csv"

@@ -113,6 +113,12 @@ def add_model_options(parser):
     group.add_argument("--lambda_rcxyz", default=0.0, type=float, help="Joint positions loss.")
     group.add_argument("--lambda_vel", default=0.0, type=float, help="Joint velocity loss.")
     group.add_argument("--lambda_fc", default=0.0, type=float, help="Foot contact loss.")
+    group.add_argument("--lambda_hml_contact", default=0.0, type=float,
+                       help="HumanML foot contact channel loss on denormalized contact features.")
+    group.add_argument("--lambda_hml_contact_vel", default=0.0, type=float,
+                       help="HumanML contact-gated foot local velocity loss.")
+    group.add_argument("--lambda_hml_contact_geo", default=0.0, type=float,
+                       help="HumanML recover_from_ric foot geometry contact loss.")
     group.add_argument("--lambda_target_loc", default=0.0, type=float, help="For HumanML only, when . L2 with target location.")
     group.add_argument("--unconstrained", action='store_true',
                        help="Model is trained unconditionally. That is, it is constrained by neither text nor action. "
@@ -132,12 +138,6 @@ def add_model_options(parser):
     group.add_argument("--plan_one_struct_cond_mode", default='all_joints',
                        choices=['all_joints', 'torso_only', 'none'], type=str,
                        help="For plan_one only, controls how timestep/text condition is injected into h_struct.")
-    group.add_argument("--plan_one_local_mode", default='full',
-                       choices=['full', 'zero', 'shared_gate', 'shared_group_gate'], type=str,
-                       help="For plan_one only. Use zero to ablate local, shared_gate for scalar-gated shared local, or shared_group_gate for shared leg filters with leg/torso gates.")
-    group.add_argument("--plan_one_refine_mode", default='full',
-                       choices=['full', 'off'], type=str,
-                       help="For plan_one only, ablates residual TCN refinement by setting delta_raw to zero when set to off.")
     
 
     group.add_argument("--multi_target_cond", action='store_true', help="If true, enable multi-target conditioning (aka Sigal's model).")
@@ -224,6 +224,7 @@ def add_sampling_options(parser):
                        help="Number of repetitions, per sample (text prompt/action)")
     group.add_argument("--guidance_param", default=2.5, type=float,
                        help="For classifier-free sampling - specifies the s parameter, as defined in the paper.")
+
     group.add_argument("--autoregressive", action='store_true', help="If true, and we use a prefix model will generate motions in an autoregressive loop.")
     group.add_argument("--autoregressive_include_prefix", action='store_true', help="If true, include the init prefix in the output, otherwise, will drop it.")
     group.add_argument("--autoregressive_init", default='data', type=str, choices=['data', 'isaac'], 
@@ -282,12 +283,6 @@ def add_evaluation_options(parser):
                         help="Sets the source of the init frames, either from the dataset or isaac init poses.")
     group.add_argument("--guidance_param", default=2.5, type=float,
                        help="For classifier-free sampling - specifies the s parameter, as defined in the paper.")
-    group.add_argument("--replication_times", default=-1, type=int,
-                       help="Override the number of evaluation replications. "
-                            "Use -1 to keep the default value from eval_mode.")
-    group.add_argument("--skip_fid", action='store_true',
-                       help="Skip FID during HumanML evaluation. Useful when scipy sqrtm "
-                            "produces a large imaginary component for unstable covariance matrices.")
 
 
 def get_cond_mode(args):
