@@ -147,6 +147,11 @@ def create_gaussian_diffusion(args):
     lambda_hml_contact = args.__dict__.get('lambda_hml_contact', 0.)
     lambda_hml_contact_vel = args.__dict__.get('lambda_hml_contact_vel', 0.)
     lambda_hml_contact_geo = args.__dict__.get('lambda_hml_contact_geo', 0.)
+    lambda_hml_contact_geo_slide = args.__dict__.get('lambda_hml_contact_geo_slide', 0.)
+    lambda_hml_contact_geo_height = args.__dict__.get('lambda_hml_contact_geo_height', 0.)
+    lambda_hml_contact_geo_vertical = args.__dict__.get('lambda_hml_contact_geo_vertical', 0.)
+    lambda_hml_contact_geo_continuity = args.__dict__.get('lambda_hml_contact_geo_continuity', 0.)
+    lambda_hml_contact_geo_smooth = args.__dict__.get('lambda_hml_contact_geo_smooth', 0.)
     data_rep = 'hml_vec' if args.dataset in ['humanml', 'kit'] else 'rot6d'
 
     return SpacedDiffusion(
@@ -174,6 +179,11 @@ def create_gaussian_diffusion(args):
         lambda_hml_contact=lambda_hml_contact,
         lambda_hml_contact_vel=lambda_hml_contact_vel,
         lambda_hml_contact_geo=lambda_hml_contact_geo,
+        lambda_hml_contact_geo_slide=lambda_hml_contact_geo_slide,
+        lambda_hml_contact_geo_height=lambda_hml_contact_geo_height,
+        lambda_hml_contact_geo_vertical=lambda_hml_contact_geo_vertical,
+        lambda_hml_contact_geo_continuity=lambda_hml_contact_geo_continuity,
+        lambda_hml_contact_geo_smooth=lambda_hml_contact_geo_smooth,
     )
 
 def load_saved_model(model, model_path, use_avg: bool=False):  # use_avg_model

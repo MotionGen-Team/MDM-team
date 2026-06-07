@@ -118,7 +118,17 @@ def add_model_options(parser):
     group.add_argument("--lambda_hml_contact_vel", default=0.0, type=float,
                        help="HumanML contact-gated foot local velocity loss.")
     group.add_argument("--lambda_hml_contact_geo", default=0.0, type=float,
-                       help="HumanML recover_from_ric foot geometry contact loss.")
+                       help="Legacy HumanML recover_from_ric foot geometry contact loss: slide + vertical + height.")
+    group.add_argument("--lambda_hml_contact_geo_slide", default=0.0, type=float,
+                       help="HumanML contact-frame foot XZ sliding loss after recover_from_ric.")
+    group.add_argument("--lambda_hml_contact_geo_height", default=0.0, type=float,
+                       help="HumanML contact-frame foot height loss after recover_from_ric.")
+    group.add_argument("--lambda_hml_contact_geo_vertical", default=0.0, type=float,
+                       help="HumanML contact-frame foot vertical delta loss after recover_from_ric.")
+    group.add_argument("--lambda_hml_contact_geo_continuity", default=0.0, type=float,
+                       help="HumanML eval-aligned contact continuity loss for foot height and vertical delta.")
+    group.add_argument("--lambda_hml_contact_geo_smooth", default=0.0, type=float,
+                       help="HumanML contact-frame foot second-difference smoothness loss.")
     group.add_argument("--lambda_target_loc", default=0.0, type=float, help="For HumanML only, when . L2 with target location.")
     group.add_argument("--unconstrained", action='store_true',
                        help="Model is trained unconditionally. That is, it is constrained by neither text nor action. "

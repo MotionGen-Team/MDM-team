@@ -140,6 +140,11 @@ class GaussianDiffusion:
         lambda_hml_contact=0.,
         lambda_hml_contact_vel=0.,
         lambda_hml_contact_geo=0.,
+        lambda_hml_contact_geo_slide=0.,
+        lambda_hml_contact_geo_height=0.,
+        lambda_hml_contact_geo_vertical=0.,
+        lambda_hml_contact_geo_continuity=0.,
+        lambda_hml_contact_geo_smooth=0.,
         **kargs,
     ):
         self.model_mean_type = model_mean_type
@@ -163,11 +168,23 @@ class GaussianDiffusion:
         self.lambda_hml_contact = lambda_hml_contact
         self.lambda_hml_contact_vel = lambda_hml_contact_vel
         self.lambda_hml_contact_geo = lambda_hml_contact_geo
+        self.lambda_hml_contact_geo_slide = lambda_hml_contact_geo_slide
+        self.lambda_hml_contact_geo_height = lambda_hml_contact_geo_height
+        self.lambda_hml_contact_geo_vertical = lambda_hml_contact_geo_vertical
+        self.lambda_hml_contact_geo_continuity = lambda_hml_contact_geo_continuity
+        self.lambda_hml_contact_geo_smooth = lambda_hml_contact_geo_smooth
+        self.use_hml_contact_geo = (
+            self.lambda_hml_contact_geo > 0. or
+            self.lambda_hml_contact_geo_slide > 0. or
+            self.lambda_hml_contact_geo_height > 0. or
+            self.lambda_hml_contact_geo_vertical > 0. or
+            self.lambda_hml_contact_geo_continuity > 0. or
+            self.lambda_hml_contact_geo_smooth > 0.
+        )
 
         if self.lambda_rcxyz > 0. or self.lambda_vel > 0. or self.lambda_root_vel > 0. or \
                 self.lambda_vel_rcxyz > 0. or self.lambda_fc > 0. or self.lambda_target_loc > 0. or \
-                self.lambda_hml_contact > 0. or self.lambda_hml_contact_vel > 0. or \
-                self.lambda_hml_contact_geo > 0.:
+                self.lambda_hml_contact > 0. or self.lambda_hml_contact_vel > 0. or self.use_hml_contact_geo:
             assert self.loss_type == LossType.MSE, 'Geometric losses are supported by MSE loss type only!'
 
         # Use float64 for accuracy.
@@ -1354,7 +1371,7 @@ class GaussianDiffusion:
                                             model_kwargs['y']['target_joint_names'], model_kwargs['y']['is_heading'])
                 terms["target_loc"] = masked_goal_l2(pred_target, ref_target, model_kwargs['y'], model.all_goal_joint_names)
 
-            if self.lambda_hml_contact > 0. or self.lambda_hml_contact_vel > 0. or self.lambda_hml_contact_geo > 0.:
+            if self.lambda_hml_contact > 0. or self.lambda_hml_contact_vel > 0. or self.use_hml_contact_geo:
                 assert self.model_mean_type == ModelMeanType.START_X, 'HumanML contact losses support only X_start prediction.'
                 hml_terms = self.humanml_contact_losses(target, model_output, mask, dataset)
                 terms.update(hml_terms)
@@ -1366,7 +1383,12 @@ class GaussianDiffusion:
                             (self.lambda_fc * terms.get('fc', 0.)) + \
                             (self.lambda_hml_contact * terms.get('hml_contact', 0.)) + \
                             (self.lambda_hml_contact_vel * terms.get('hml_contact_vel', 0.)) + \
-                            (self.lambda_hml_contact_geo * terms.get('hml_contact_geo', 0.))
+                            (self.lambda_hml_contact_geo * terms.get('hml_contact_geo', 0.)) + \
+                            (self.lambda_hml_contact_geo_slide * terms.get('hml_contact_geo_slide', 0.)) + \
+                            (self.lambda_hml_contact_geo_height * terms.get('hml_contact_geo_height', 0.)) + \
+                            (self.lambda_hml_contact_geo_vertical * terms.get('hml_contact_geo_vertical', 0.)) + \
+                            (self.lambda_hml_contact_geo_continuity * terms.get('hml_contact_geo_continuity', 0.)) + \
+                            (self.lambda_hml_contact_geo_smooth * terms.get('hml_contact_geo_smooth', 0.))
 
         else:
             raise NotImplementedError(self.loss_type)
@@ -1404,7 +1426,7 @@ class GaussianDiffusion:
         denom = contact_mask.sum(dim=(1, 2, 3)) * pred_foot_vel.shape[2]
         terms['hml_contact_vel'] = vel_loss.sum(dim=(1, 2, 3)) / (denom + 1e-8)
 
-        if self.lambda_hml_contact_geo > 0.:
+        if self.use_hml_contact_geo:
             terms.update(self.humanml_contact_geometry_losses(target_denorm, pred_denorm, mask))
 
         return terms
@@ -1462,10 +1484,27 @@ class GaussianDiffusion:
         height_denom = slide_denom
         height_loss = height_loss.sum(dim=(1, 2)) / (height_denom + 1e-8)
 
+        pred_delta_y_abs = pred_delta[..., 1].abs()
+        pred_height_over = torch.relu(pred_height - contact_height_threshold)
+        pred_vertical_over = torch.relu(pred_delta_y_abs - contact_vel_threshold)
+        continuity_loss = (pred_height_over.pow(2) + pred_vertical_over.pow(2)) * delta_mask
+        continuity_loss = continuity_loss.sum(dim=(1, 2)) / (slide_denom + 1e-8)
+
+        if pred_feet.shape[1] >= 3:
+            pred_accel = pred_feet[:, 2:] - 2 * pred_feet[:, 1:-1] + pred_feet[:, :-2]
+            smooth_mask = (delta_contact_mask[:, :-1] & delta_contact_mask[:, 1:]).to(dtype=pred_denorm.dtype)
+            smooth_loss = pred_accel.pow(2).sum(dim=-1) * smooth_mask
+            smooth_denom = smooth_mask.sum(dim=(1, 2))
+            smooth_loss = smooth_loss.sum(dim=(1, 2)) / (smooth_denom + 1e-8)
+        else:
+            smooth_loss = torch.zeros_like(slide_loss)
+
         return {
             'hml_contact_geo_slide': slide_loss,
             'hml_contact_geo_vertical': vertical_loss,
             'hml_contact_geo_height': height_loss,
+            'hml_contact_geo_continuity': continuity_loss,
+            'hml_contact_geo_smooth': smooth_loss,
             'hml_contact_geo': slide_loss + vertical_loss + height_loss,
         }
 
