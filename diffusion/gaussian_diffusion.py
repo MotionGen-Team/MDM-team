@@ -145,6 +145,8 @@ class GaussianDiffusion:
         lambda_hml_contact_geo_vertical=0.,
         lambda_hml_contact_geo_continuity=0.,
         lambda_hml_contact_geo_smooth=0.,
+        lambda_hml_contact_geo_coverage=0.,
+        hml_contact_geo_gate='none',
         **kargs,
     ):
         self.model_mean_type = model_mean_type
@@ -173,13 +175,18 @@ class GaussianDiffusion:
         self.lambda_hml_contact_geo_vertical = lambda_hml_contact_geo_vertical
         self.lambda_hml_contact_geo_continuity = lambda_hml_contact_geo_continuity
         self.lambda_hml_contact_geo_smooth = lambda_hml_contact_geo_smooth
+        self.lambda_hml_contact_geo_coverage = lambda_hml_contact_geo_coverage
+        if hml_contact_geo_gate not in ('none', 'locomotion_text'):
+            raise ValueError(f'Unknown hml_contact_geo_gate: {hml_contact_geo_gate}')
+        self.hml_contact_geo_gate = hml_contact_geo_gate
         self.use_hml_contact_geo = (
             self.lambda_hml_contact_geo > 0. or
             self.lambda_hml_contact_geo_slide > 0. or
             self.lambda_hml_contact_geo_height > 0. or
             self.lambda_hml_contact_geo_vertical > 0. or
             self.lambda_hml_contact_geo_continuity > 0. or
-            self.lambda_hml_contact_geo_smooth > 0.
+            self.lambda_hml_contact_geo_smooth > 0. or
+            self.lambda_hml_contact_geo_coverage > 0.
         )
 
         if self.lambda_rcxyz > 0. or self.lambda_vel > 0. or self.lambda_root_vel > 0. or \
@@ -1373,7 +1380,7 @@ class GaussianDiffusion:
 
             if self.lambda_hml_contact > 0. or self.lambda_hml_contact_vel > 0. or self.use_hml_contact_geo:
                 assert self.model_mean_type == ModelMeanType.START_X, 'HumanML contact losses support only X_start prediction.'
-                hml_terms = self.humanml_contact_losses(target, model_output, mask, dataset)
+                hml_terms = self.humanml_contact_losses(target, model_output, mask, dataset, model_kwargs)
                 terms.update(hml_terms)
 
             terms["loss"] = terms["rot_mse"] + terms.get('vb', 0.) +\
@@ -1388,14 +1395,15 @@ class GaussianDiffusion:
                             (self.lambda_hml_contact_geo_height * terms.get('hml_contact_geo_height', 0.)) + \
                             (self.lambda_hml_contact_geo_vertical * terms.get('hml_contact_geo_vertical', 0.)) + \
                             (self.lambda_hml_contact_geo_continuity * terms.get('hml_contact_geo_continuity', 0.)) + \
-                            (self.lambda_hml_contact_geo_smooth * terms.get('hml_contact_geo_smooth', 0.))
+                            (self.lambda_hml_contact_geo_smooth * terms.get('hml_contact_geo_smooth', 0.)) + \
+                            (self.lambda_hml_contact_geo_coverage * terms.get('hml_contact_geo_coverage', 0.))
 
         else:
             raise NotImplementedError(self.loss_type)
 
         return terms
 
-    def humanml_contact_losses(self, target, model_output, mask, dataset):
+    def humanml_contact_losses(self, target, model_output, mask, dataset, model_kwargs=None):
         if self.data_rep != 'hml_vec':
             raise ValueError('HumanML contact losses require hml_vec data representation.')
         if target.shape[1] < 263 or model_output.shape[1] < 263:
@@ -1427,9 +1435,67 @@ class GaussianDiffusion:
         terms['hml_contact_vel'] = vel_loss.sum(dim=(1, 2, 3)) / (denom + 1e-8)
 
         if self.use_hml_contact_geo:
-            terms.update(self.humanml_contact_geometry_losses(target_denorm, pred_denorm, mask))
+            geo_gate = self.humanml_contact_geo_gate_mask(model_kwargs, target.shape[0], target.device, target.dtype)
+            geo_terms = self.humanml_contact_geometry_losses(target_denorm, pred_denorm, mask)
+            if geo_gate is not None:
+                for key in (
+                    'hml_contact_geo_slide',
+                    'hml_contact_geo_vertical',
+                    'hml_contact_geo_height',
+                    'hml_contact_geo_continuity',
+                    'hml_contact_geo_smooth',
+                    'hml_contact_geo_coverage',
+                    'hml_contact_geo',
+                ):
+                    geo_terms[key] = geo_terms[key] * geo_gate
+                geo_terms['hml_contact_geo_gate'] = geo_gate
+            terms.update(geo_terms)
 
         return terms
+
+    def humanml_contact_geo_gate_mask(self, model_kwargs, batch_size, device, dtype):
+        if self.hml_contact_geo_gate == 'none':
+            return None
+        if model_kwargs is None or 'y' not in model_kwargs or 'text' not in model_kwargs['y']:
+            return torch.ones(batch_size, device=device, dtype=dtype)
+
+        texts = model_kwargs['y']['text']
+        if len(texts) != batch_size:
+            return torch.ones(batch_size, device=device, dtype=dtype)
+
+        if self.hml_contact_geo_gate == 'locomotion_text':
+            values = [1.0 if self.is_locomotion_text(text) else 0.0 for text in texts]
+            return torch.tensor(values, device=device, dtype=dtype)
+
+        raise ValueError(f'Unknown hml_contact_geo_gate: {self.hml_contact_geo_gate}')
+
+    @staticmethod
+    def is_locomotion_text(text):
+        text = str(text).lower()
+        locomotion_words = (
+            'walk',
+            'run',
+            'jog',
+            'step',
+            'stroll',
+            'pace',
+            'march',
+            'limp',
+            'skip',
+            'move forward',
+            'moves forward',
+            'walking',
+            'running',
+        )
+        airborne_words = (
+            'jump',
+            'hop',
+            'leap',
+            'air',
+            'kick',
+            'vault',
+        )
+        return any(word in text for word in locomotion_words) and not any(word in text for word in airborne_words)
 
     def humanml_contact_geometry_losses(self, target_denorm, pred_denorm, mask):
         target_seq = target_denorm.squeeze(2).permute(0, 2, 1).contiguous()
@@ -1490,6 +1556,13 @@ class GaussianDiffusion:
         continuity_loss = (pred_height_over.pow(2) + pred_vertical_over.pow(2)) * delta_mask
         continuity_loss = continuity_loss.sum(dim=(1, 2)) / (slide_denom + 1e-8)
 
+        target_any_contact = delta_contact_mask.any(dim=2)
+        coverage_mask = target_any_contact.to(dtype=pred_denorm.dtype)
+        pred_contact_error = pred_height_over.pow(2) + pred_vertical_over.pow(2)
+        pred_best_contact_error = pred_contact_error.min(dim=2).values
+        coverage_denom = coverage_mask.sum(dim=1)
+        coverage_loss = (pred_best_contact_error * coverage_mask).sum(dim=1) / (coverage_denom + 1e-8)
+
         if pred_feet.shape[1] >= 3:
             pred_accel = pred_feet[:, 2:] - 2 * pred_feet[:, 1:-1] + pred_feet[:, :-2]
             smooth_mask = (delta_contact_mask[:, :-1] & delta_contact_mask[:, 1:]).to(dtype=pred_denorm.dtype)
@@ -1505,6 +1578,7 @@ class GaussianDiffusion:
             'hml_contact_geo_height': height_loss,
             'hml_contact_geo_continuity': continuity_loss,
             'hml_contact_geo_smooth': smooth_loss,
+            'hml_contact_geo_coverage': coverage_loss,
             'hml_contact_geo': slide_loss + vertical_loss + height_loss,
         }
 

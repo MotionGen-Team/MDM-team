@@ -51,6 +51,7 @@ LOWER_IS_BETTER = {
     "floor_penetration",
     "double_support_ratio",
     "no_contact_ratio",
+    "locomotion_no_contact_ratio",
 }
 
 
@@ -515,6 +516,10 @@ def metric_keys() -> List[str]:
     ]
 
 
+def summary_metric_keys() -> List[str]:
+    return metric_keys() + ["locomotion_no_contact_ratio"]
+
+
 def evaluate_file(args, path: str, tag: str) -> Tuple[List[Dict[str, float]], Dict[str, Dict[str, float]]]:
     motions, lengths, texts = load_motion_file(path)
     profile = infer_profile(args.dataset, motions.shape[2])
@@ -613,6 +618,16 @@ def summarize_rows(rows: List[Dict[str, float]]) -> Dict[str, Dict[str, float]]:
             "mean": finite_mean(values),
             "std": finite_std(values),
         }
+    locomotion_values = [
+        row.get("no_contact_ratio", float("nan"))
+        for row in rows
+        if row.get("motion_group", "other") == "locomotion"
+    ]
+    summary["locomotion_no_contact_ratio"] = {
+        "mean": finite_mean(locomotion_values),
+        "std": finite_std(locomotion_values),
+        "count": len(locomotion_values),
+    }
     return summary
 
 
@@ -632,7 +647,7 @@ def compare_summaries(
     baseline: Dict[str, Dict[str, float]], target: Dict[str, Dict[str, float]]
 ) -> Dict[str, Dict[str, float]]:
     comparison = {}
-    for key in metric_keys():
+    for key in summary_metric_keys():
         base = baseline[key]["mean"]
         new = target[key]["mean"]
         delta = new - base if np.isfinite(base) and np.isfinite(new) else float("nan")
@@ -690,10 +705,12 @@ def default_output_prefix(input_path: str) -> str:
 
 def print_summary(title: str, summary: Dict[str, Dict[str, float]]) -> None:
     print(f"\n{title}")
-    for key in metric_keys():
+    for key in summary_metric_keys():
         mean = summary[key]["mean"]
         std = summary[key]["std"]
-        print(f"{key:24s} mean={mean:.6g} std={std:.6g}")
+        count = summary[key].get("count")
+        suffix = f" count={count}" if count is not None else ""
+        print(f"{key:28s} mean={mean:.6g} std={std:.6g}{suffix}")
 
 
 def resolve_input_path(path: str) -> str:
@@ -809,13 +826,6 @@ def main() -> None:
             apply_overrides=False,
         )
         baseline_rows, baseline_summary = evaluate_file(args, baseline_path, "baseline")
-        baseline_groups = {row["sample_index"]: row["motion_group"] for row in baseline_rows}
-        for row in target_rows:
-            if row["sample_index"] in baseline_groups:
-                row["motion_group"] = baseline_groups[row["sample_index"]]
-        target_grouped_summary = summarize_grouped_rows(target_rows)
-        payload["target"]["grouped_summary"] = target_grouped_summary
-
         baseline_grouped_summary = summarize_grouped_rows(baseline_rows)
         all_rows = baseline_rows + target_rows
         payload["baseline"] = {

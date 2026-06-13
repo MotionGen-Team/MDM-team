@@ -129,6 +129,10 @@ def add_model_options(parser):
                        help="HumanML eval-aligned contact continuity loss for foot height and vertical delta.")
     group.add_argument("--lambda_hml_contact_geo_smooth", default=0.0, type=float,
                        help="HumanML contact-frame foot second-difference smoothness loss.")
+    group.add_argument("--lambda_hml_contact_geo_coverage", default=0.0, type=float,
+                       help="HumanML soft any-foot contact coverage loss on target contact frames.")
+    group.add_argument("--hml_contact_geo_gate", default='none', choices=['none', 'locomotion_text'], type=str,
+                       help="Optional gate for HumanML recover_from_ric foot geometry losses.")
     group.add_argument("--lambda_target_loc", default=0.0, type=float, help="For HumanML only, when . L2 with target location.")
     group.add_argument("--unconstrained", action='store_true',
                        help="Model is trained unconditionally. That is, it is constrained by neither text nor action. "
